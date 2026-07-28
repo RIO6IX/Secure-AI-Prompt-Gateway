@@ -26,3 +26,4 @@ https://secure-ai-prompt-gateway.rio6ix.chatgpt.site/api/audit
 ```
 
 Override it with `REMOTE_AUDIT_API_URL` when deploying to a different dashboard URL.
+For a private hosted dashboard, also set `REMOTE_AUDIT_BEARER_TOKEN` so the Python service can write through the site access layer without making the dashboard public.

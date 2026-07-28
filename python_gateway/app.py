@@ -23,6 +23,7 @@ REMOTE_AUDIT_API_URL = os.getenv(
     "REMOTE_AUDIT_API_URL",
     "https://secure-ai-prompt-gateway.rio6ix.chatgpt.site/api/audit",
 )
+REMOTE_AUDIT_BEARER_TOKEN = os.getenv("REMOTE_AUDIT_BEARER_TOKEN", "")
 
 app = FastAPI(
     title="Secure AI Prompt Gateway Python Service",
@@ -162,8 +163,16 @@ def inspect_prompt(payload: PromptInspectionIn) -> AuditEventIn:
 
 
 async def write_remote(event: AuditEventIn) -> str | None:
+    headers = {}
+    if REMOTE_AUDIT_BEARER_TOKEN:
+        headers["authorization"] = f"Bearer {REMOTE_AUDIT_BEARER_TOKEN}"
+
     async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.post(REMOTE_AUDIT_API_URL, json=event.model_dump())
+        response = await client.post(
+            REMOTE_AUDIT_API_URL,
+            json=event.model_dump(),
+            headers=headers,
+        )
         response.raise_for_status()
         body = response.json()
         return body.get("id")
@@ -217,6 +226,7 @@ def health() -> dict[str, object]:
         "status": "healthy",
         "service": "python-prompt-gateway",
         "remoteAuditApiUrl": REMOTE_AUDIT_API_URL,
+        "remoteAuthConfigured": bool(REMOTE_AUDIT_BEARER_TOKEN),
         "database": DB_PATH.name,
         "time": datetime.now(timezone.utc).isoformat(),
     }
