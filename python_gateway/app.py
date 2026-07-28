@@ -14,7 +14,7 @@ from typing import Literal
 from uuid import uuid4
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -323,6 +323,33 @@ def health() -> dict[str, object]:
     }
 
 
+@app.get("/policies")
+def policies(authorization: str | None = Header(default=None)) -> dict[str, object]:
+    get_auth_user(authorization)
+    return {
+        "policies": [
+            {"name": "Block credentials and tokens", "mode": "Enforce", "owner": "Security", "enabled": True},
+            {"name": "Mask PCI data before AI submission", "mode": "Enforce", "owner": "Compliance", "enabled": True},
+            {"name": "Mask PII before AI submission", "mode": "Enforce", "owner": "Privacy", "enabled": True},
+            {"name": "Warn on source code or internal URLs", "mode": "Monitor", "owner": "Engineering", "enabled": True},
+            {"name": "Default prompt leakage policy", "mode": "Monitor", "owner": "Security", "enabled": True},
+        ]
+    }
+
+
+@app.get("/integrations")
+def integrations(authorization: str | None = Header(default=None)) -> dict[str, object]:
+    get_auth_user(authorization)
+    return {
+        "integrations": [
+            {"name": "ChatGPT Enterprise", "status": "Ready", "mode": "Prompt gateway"},
+            {"name": "Google Gemini", "status": "Ready", "mode": "Prompt gateway"},
+            {"name": "Microsoft Copilot", "status": "Ready", "mode": "Prompt gateway"},
+            {"name": "Browser Extension", "status": "Local backend", "mode": "JavaScript extension"},
+        ]
+    }
+
+
 @app.post("/auth/register", response_model=AuthOut, status_code=201)
 def register(payload: RegisterIn) -> AuthOut:
     init_db()
@@ -369,6 +396,25 @@ def login(payload: LoginIn) -> AuthOut:
 @app.get("/auth/me")
 def me(authorization: str | None = Header(default=None)) -> dict[str, str]:
     return get_auth_user(authorization)
+
+
+@app.get("/users")
+def users(authorization: str | None = Header(default=None)) -> dict[str, object]:
+    get_auth_user(authorization)
+    init_db()
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT u.id, u.name, u.email, u.role, u.created_at AS createdAt,
+                   COUNT(a.id) AS promptCount,
+                   SUM(CASE WHEN a.status = 'Blocked' THEN 1 ELSE 0 END) AS blockedCount
+            FROM users u
+            LEFT JOIN audit_events a ON a.actor = u.email
+            GROUP BY u.id, u.name, u.email, u.role, u.created_at
+            ORDER BY u.created_at DESC
+            """
+        ).fetchall()
+    return {"users": [dict(row) for row in rows]}
 
 
 @app.post("/inspect", response_model=AuditEvent)
@@ -502,6 +548,51 @@ def audit_summary(authorization: str | None = Header(default=None)) -> dict[str,
         "dataTypes": rows(data_types),
         "trend": [],
     }
+
+
+@app.get("/reports/export")
+def export_report(authorization: str | None = Header(default=None)) -> Response:
+    get_auth_user(authorization)
+    init_db()
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, timestamp, actor, department, service, action, status, risk,
+                   risk_score, finding, category, policy_rule, masked_output, source
+            FROM audit_events
+            ORDER BY timestamp DESC
+            """
+        ).fetchall()
+
+    headers = [
+        "id",
+        "timestamp",
+        "actor",
+        "department",
+        "service",
+        "action",
+        "status",
+        "risk",
+        "risk_score",
+        "finding",
+        "category",
+        "policy_rule",
+        "masked_output",
+        "source",
+    ]
+    lines = [",".join(headers)]
+    for row in rows:
+        values = []
+        for header in headers:
+            value = str(row[header] or "").replace('"', '""')
+            values.append(f'"{value}"')
+        lines.append(",".join(values))
+
+    return Response(
+        "\n".join(lines),
+        media_type="text/csv",
+        headers={"content-disposition": "attachment; filename=secure-ai-audit-report.csv"},
+    )
 
 
 @app.post("/audit", response_model=AuditEvent, status_code=201)

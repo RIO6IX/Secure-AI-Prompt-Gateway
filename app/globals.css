@@ -208,20 +208,26 @@ nav {
   gap: 0.4rem;
 }
 
-nav a {
+nav a,
+nav button {
   display: flex;
   align-items: center;
   gap: 0.8rem;
+  width: 100%;
   min-height: 2.75rem;
   padding: 0 0.9rem;
+  border: 0;
   border-radius: 0.45rem;
+  background: transparent;
   color: #dbeafe;
   text-decoration: none;
   transition: background 160ms ease, color 160ms ease;
 }
 
 nav a:hover,
-nav a.active {
+nav a.active,
+nav button:hover,
+nav button.active {
   background: linear-gradient(135deg, rgba(47, 125, 246, 0.95), rgba(47, 125, 246, 0.52));
   color: white;
 }
@@ -269,6 +275,7 @@ nav a.active {
 }
 
 .system-card a,
+.system-card button,
 .topbar-actions button,
 .panel-heading button {
   display: inline-flex;
@@ -362,16 +369,24 @@ nav a.active {
 }
 
 .backend-error,
-.empty-state {
+.empty-state,
+.success-state {
   border: 1px solid rgba(247, 167, 23, 0.28);
   border-radius: 0.5rem;
   background: rgba(247, 167, 23, 0.09);
   color: #ffd27c;
 }
 
-.backend-error {
+.backend-error,
+.success-state {
   margin: 0.9rem 0;
   padding: 0.85rem 1rem;
+}
+
+.success-state {
+  border-color: rgba(53, 184, 107, 0.28);
+  background: rgba(53, 184, 107, 0.1);
+  color: #8af0ad;
 }
 
 .empty-state {
@@ -858,6 +873,120 @@ nav a.active {
 .policy-grid em {
   color: #90bdff;
   font-style: normal;
+}
+
+.single-view {
+  margin-top: 0.95rem;
+}
+
+.tool-panel {
+  padding: 1rem;
+}
+
+.prompt-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.prompt-form label {
+  display: grid;
+  gap: 0.45rem;
+  color: #dbeafe;
+  font-weight: 700;
+}
+
+.prompt-form select,
+.prompt-form textarea {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 0.42rem;
+  background: rgba(5, 13, 24, 0.7);
+  color: var(--text);
+}
+
+.prompt-form select {
+  min-height: 2.7rem;
+  padding: 0 0.75rem;
+}
+
+.prompt-form textarea {
+  min-height: 13rem;
+  padding: 0.8rem;
+  resize: vertical;
+}
+
+.prompt-form button,
+.action-card button {
+  width: fit-content;
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: 0.42rem;
+  background: var(--blue);
+  color: white;
+  font-weight: 800;
+}
+
+.result-box,
+.action-card {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0.5rem;
+  background: rgba(6, 16, 29, 0.45);
+}
+
+.result-box p,
+.action-card p {
+  color: var(--muted);
+}
+
+.result-box pre {
+  overflow-x: auto;
+  white-space: pre-wrap;
+  padding: 0.9rem;
+  border-radius: 0.45rem;
+  background: rgba(0, 0, 0, 0.24);
+  color: #dbeafe;
+}
+
+.simple-table {
+  overflow-x: auto;
+}
+
+.simple-table > div {
+  min-width: 48rem;
+  display: grid;
+  grid-template-columns: 1.2fr 1.6fr 1fr 0.7fr 0.7fr;
+  gap: 0.75rem;
+  padding: 0.8rem 0.7rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.simple-table strong {
+  color: #92a6bf;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(12rem, 1fr));
+  gap: 0.8rem;
+}
+
+.settings-grid div {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 0.45rem;
+  background: rgba(6, 16, 29, 0.42);
+}
+
+.settings-grid span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 1180px) {

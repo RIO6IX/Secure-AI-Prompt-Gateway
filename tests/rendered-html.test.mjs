@@ -14,11 +14,16 @@ test("dashboard is wired to the audit backend instead of mock data", async () =>
   ]);
 
   assert.match(page, /<AuditDashboard \/>/);
-  assert.match(dashboard, /\$\{API_BASE_URL\}\/audit/);
+  assert.match(dashboard, /API_BASE_URL/);
+  assert.match(dashboard, /apiFetch<AuditResponse>\("\/audit"\)/);
+  assert.match(dashboard, /\/inspect/);
+  assert.match(dashboard, /\/reports\/export/);
   assert.match(dashboard, /API_BASE_URL/);
   assert.match(dashboard, /TOKEN_KEY/);
   assert.match(dashboard, /Ingest Test Event/);
-  assert.match(dashboard, /No audit events in the backend yet/);
+  assert.match(dashboard, /No records in the backend yet/);
+  assert.match(dashboard, /Prompt Monitor/);
+  assert.match(dashboard, /setActiveView/);
   assert.doesNotMatch(dashboard, /12,842|john\.doe@company\.com|API key detected in prompt/i);
 
   assert.match(auditRoute, /CREATE TABLE IF NOT EXISTS audit_events/);
