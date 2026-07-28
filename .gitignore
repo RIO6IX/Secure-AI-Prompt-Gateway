@@ -44,3 +44,8 @@ next-env.d.ts
 # deployment packaging artifacts
 *.tar.gz
 /sites-package-stage/
+/sites-package-stage-db/
+*.log
+__pycache__/
+*.pyc
+python_gateway/audit_logs.sqlite3

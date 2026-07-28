@@ -61,6 +61,93 @@ button:disabled {
   min-height: 100vh;
 }
 
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+}
+
+.auth-panel {
+  width: min(100%, 30rem);
+  padding: 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background:
+    linear-gradient(135deg, rgba(47, 125, 246, 0.12), transparent 42%),
+    rgba(16, 27, 42, 0.96);
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.28);
+}
+
+.auth-copy {
+  margin: 2rem 0 1.2rem;
+}
+
+.auth-copy p,
+.auth-copy h1,
+.auth-copy span {
+  margin: 0;
+}
+
+.auth-copy p {
+  color: #90bdff;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.auth-copy h1 {
+  margin-top: 0.25rem;
+  font-size: 2.1rem;
+}
+
+.auth-copy span,
+.auth-switch {
+  color: var(--muted);
+}
+
+.auth-panel form,
+.auth-panel label {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.auth-panel form {
+  gap: 0.95rem;
+}
+
+.auth-panel label {
+  color: #dbeafe;
+  font-weight: 700;
+}
+
+.auth-panel input {
+  width: 100%;
+  min-height: 2.85rem;
+  padding: 0 0.85rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 0.42rem;
+  background: rgba(5, 13, 24, 0.7);
+  color: var(--text);
+}
+
+.auth-panel button {
+  min-height: 2.9rem;
+  border: 0;
+  border-radius: 0.42rem;
+  background: var(--blue);
+  color: white;
+  font-weight: 800;
+}
+
+.auth-switch {
+  display: block;
+  margin-top: 1rem;
+  text-align: center;
+  text-decoration: none;
+}
+
 .sidebar {
   position: sticky;
   top: 0;

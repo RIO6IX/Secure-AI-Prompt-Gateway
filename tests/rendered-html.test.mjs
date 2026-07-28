@@ -14,7 +14,9 @@ test("dashboard is wired to the audit backend instead of mock data", async () =>
   ]);
 
   assert.match(page, /<AuditDashboard \/>/);
-  assert.match(dashboard, /fetch\("\/api\/audit"/);
+  assert.match(dashboard, /\$\{API_BASE_URL\}\/audit/);
+  assert.match(dashboard, /API_BASE_URL/);
+  assert.match(dashboard, /TOKEN_KEY/);
   assert.match(dashboard, /Ingest Test Event/);
   assert.match(dashboard, /No audit events in the backend yet/);
   assert.doesNotMatch(dashboard, /12,842|john\.doe@company\.com|API key detected in prompt/i);
@@ -24,6 +26,21 @@ test("dashboard is wired to the audit backend instead of mock data", async () =>
   assert.match(auditRoute, /SELECT[\s\S]+FROM audit_events/);
   assert.match(schema, /sqliteTable\("audit_events"/);
   assert.match(hosting, /"d1":\s*"DB"/);
+});
+
+test("login and register pages use the local Python backend", async () => {
+  const [loginPage, registerPage, authForm, api] = await Promise.all([
+    readFile(new URL("../app/login/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/register/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/AuthForm.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/api.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(loginPage, /<AuthForm mode="login" \/>/);
+  assert.match(registerPage, /<AuthForm mode="register" \/>/);
+  assert.match(authForm, /\/auth\/\$\{mode\}/);
+  assert.match(authForm, /localStorage\.setItem\(TOKEN_KEY/);
+  assert.match(api, /http:\/\/localhost:8000/);
 });
 
 test("removes starter preview assets and metadata", async () => {

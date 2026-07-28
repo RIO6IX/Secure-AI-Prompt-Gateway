@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { API_BASE_URL, TOKEN_KEY, USER_KEY, authHeaders, getStoredToken } from "../lib/api";
 
 type Row = Record<string, string | number | null>;
 
@@ -86,12 +87,26 @@ export function AuditDashboard() {
   const [data, setData] = useState<AuditResponse | null>(null);
   const [error, setError] = useState("");
   const [posting, setPosting] = useState(false);
+  const [user, setUser] = useState<{ name: string; email: string; role: string } | null>(null);
 
   async function load() {
     try {
-      const response = await fetch("/api/audit", { cache: "no-store" });
-      const payload = (await response.json()) as AuditResponse & { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Audit backend failed");
+      const token = getStoredToken();
+      if (!token) {
+        window.location.href = "/login";
+        return;
+      }
+      const response = await fetch(`${API_BASE_URL}/audit`, {
+        cache: "no-store",
+        headers: authHeaders(token),
+      });
+      const payload = (await response.json()) as AuditResponse & { detail?: string; error?: string };
+      if (response.status === 401) {
+        window.localStorage.removeItem(TOKEN_KEY);
+        window.location.href = "/login";
+        return;
+      }
+      if (!response.ok) throw new Error(payload.detail ?? payload.error ?? "Audit backend failed");
       setData(payload);
       setError("");
     } catch (loadError) {
@@ -100,17 +115,27 @@ export function AuditDashboard() {
   }
 
   useEffect(() => {
+    const rawUser = window.localStorage.getItem(USER_KEY);
+    if (rawUser) {
+      setUser(JSON.parse(rawUser) as { name: string; email: string; role: string });
+    }
     void load();
     const timer = window.setInterval(load, 15000);
     return () => window.clearInterval(timer);
   }, []);
 
+  function logout() {
+    window.localStorage.removeItem(TOKEN_KEY);
+    window.localStorage.removeItem(USER_KEY);
+    window.location.href = "/login";
+  }
+
   async function ingestSampleEvent() {
     setPosting(true);
     try {
-      const response = await fetch("/api/audit", {
+      const response = await fetch(`${API_BASE_URL}/audit`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           actor: "security.demo@company.com",
           department: "Security",
@@ -182,8 +207,8 @@ export function AuditDashboard() {
         <section className="system-card" aria-labelledby="system-status-title">
           <p id="system-status-title">System Status</p>
           <strong>{error ? "Degraded" : "Healthy"}</strong>
-          <span>{error || "Connected to audit backend"}</span>
-          <a href="/api/health">View System Health</a>
+          <span>{error || `Connected to ${API_BASE_URL}`}</span>
+          <a href={`${API_BASE_URL}/health`}>View System Health</a>
         </section>
       </aside>
 
@@ -203,9 +228,10 @@ export function AuditDashboard() {
               <span />
               <div>
                 <strong>sec.admin</strong>
-                <small>Security Admin</small>
+                <small>{user?.email ?? "Security Admin"}</small>
               </div>
             </div>
+            <button type="button" onClick={logout}>Logout</button>
           </div>
         </header>
 
