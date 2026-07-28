@@ -33,7 +33,8 @@ type ViewName =
   | "Audit Logs"
   | "Reports"
   | "Integrations"
-  | "System Settings";
+  | "System Settings"
+  | "Admin Panel";
 
 const navItems: ViewName[] = [
   "Dashboard",
@@ -139,9 +140,9 @@ export function AuditDashboard() {
     try {
       const [audit, usersPayload, policyPayload, integrationPayload, healthPayload] = await Promise.all([
         apiFetch<AuditResponse>("/audit"),
-        apiFetch<{ users: Row[] }>("/users"),
-        apiFetch<{ policies: Row[] }>("/policies"),
-        apiFetch<{ integrations: Row[] }>("/integrations"),
+        apiFetch<{ users: Row[] }>("/users").catch(() => ({ users: [] })),
+        apiFetch<{ policies: Row[] }>("/policies").catch(() => ({ policies: [] })),
+        apiFetch<{ integrations: Row[] }>("/integrations").catch(() => ({ integrations: [] })),
         fetch(`${API_BASE_URL}/health`).then((response) => response.json() as Promise<Row>),
       ]);
       setData(audit);
@@ -281,7 +282,17 @@ export function AuditDashboard() {
     Reports: "Export compliance-ready CSV reports.",
     Integrations: "Configured AI service and extension integration status.",
     "System Settings": "Backend health and runtime configuration.",
+    "Admin Panel": "Create users and assign admin, auditor, or user roles.",
   };
+
+  const visibleNavItems = user?.role === "admin" ? [...navItems, "Admin Panel" as ViewName] : navItems;
+
+  function openView(item: ViewName) {
+    if (item === "Audit Logs") window.location.href = "/audit-logs";
+    else if (item === "System Settings") window.location.href = "/system-settings";
+    else if (item === "Admin Panel") window.location.href = "/admin";
+    else setActiveView(item);
+  }
 
   return (
     <main className="dashboard-shell">
@@ -295,8 +306,8 @@ export function AuditDashboard() {
         </div>
 
         <nav aria-label="Primary navigation">
-          {navItems.map((item) => (
-            <button type="button" className={item === activeView ? "active" : ""} key={item} onClick={() => setActiveView(item)}>
+          {visibleNavItems.map((item) => (
+            <button type="button" className={item === activeView ? "active" : ""} key={item} onClick={() => openView(item)}>
               <span className="nav-dot" />
               {item}
             </button>
@@ -307,7 +318,7 @@ export function AuditDashboard() {
           <p id="system-status-title">System Status</p>
           <strong>{error ? "Degraded" : "Healthy"}</strong>
           <span>{error || `FastAPI connected at ${API_BASE_URL}`}</span>
-          <button type="button" onClick={() => setActiveView("System Settings")}>View System Health</button>
+          <button type="button" onClick={() => { window.location.href = "/system-settings"; }}>View System Health</button>
         </section>
       </aside>
 
@@ -393,10 +404,8 @@ export function AuditDashboard() {
         {activeView === "Data Detection" ? <section className="content-grid"><CategoryPanel categories={categories} totalEvents={totalEvents} /><DataTypesPanel dataTypes={dataTypes} maxType={maxType} /></section> : null}
         {activeView === "Policy & Rules" ? <PolicyPanel policies={policies} /> : null}
         {activeView === "Users & Access" ? <UsersAccessPanel users={users} /> : null}
-        {activeView === "Audit Logs" ? <section className="single-view"><AuditTable events={events} onReload={load} /></section> : null}
         {activeView === "Reports" ? <ReportsPanel totalEvents={totalEvents} onExport={exportReport} /> : null}
         {activeView === "Integrations" ? <IntegrationsPanel integrations={integrations} /> : null}
-        {activeView === "System Settings" ? <SettingsPanel health={health} /> : null}
       </section>
     </main>
   );

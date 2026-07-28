@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 
 RiskLevel = Literal["Low", "Medium", "High", "Critical"]
+Role = Literal["admin", "auditor", "user"]
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "audit_logs.sqlite3"
@@ -49,6 +50,10 @@ class RegisterIn(BaseModel):
     name: str = Field(..., examples=["Security Admin"])
     email: str = Field(..., examples=["sec.admin@company.com"])
     password: str = Field(..., min_length=8)
+
+
+class CreateUserIn(RegisterIn):
+    role: Role = "user"
 
 
 class LoginIn(BaseModel):
@@ -134,7 +139,19 @@ def get_auth_user(authorization: str | None) -> dict[str, str]:
     payload = verify_token(authorization.split(" ", 1)[1])
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired login")
-    return {"email": str(payload["email"]), "name": str(payload["name"]), "role": str(payload["role"])}
+    return {"email": str(payload["email"]), "name": str(payload["name"]), "role": normalize_role(str(payload["role"]))}
+
+
+def normalize_role(role: str) -> Role:
+    normalized = role.strip().lower().replace("security admin", "admin")
+    if normalized in ("admin", "auditor", "user"):
+        return normalized  # type: ignore[return-value]
+    return "user"
+
+
+def require_role(current_user: dict[str, str], allowed: set[Role]) -> None:
+    if normalize_role(current_user["role"]) not in allowed:
+        raise HTTPException(status_code=403, detail="You do not have permission for this action")
 
 
 DETECTORS: list[tuple[str, str, re.Pattern[str], str]] = [
@@ -168,6 +185,7 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute("UPDATE users SET role = 'admin' WHERE lower(role) IN ('security admin', 'administrator')")
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS audit_events (
@@ -193,11 +211,12 @@ def init_db() -> None:
 
 
 def auth_response(row: sqlite3.Row) -> AuthOut:
-    user = {"name": row["name"], "email": row["email"], "role": row["role"]}
+    role = normalize_role(row["role"])
+    user = {"name": row["name"], "email": row["email"], "role": role}
     token = sign_token({
         "name": row["name"],
         "email": row["email"],
-        "role": row["role"],
+        "role": role,
         "exp": int(time.time()) + 60 * 60 * 12,
     })
     return AuthOut(token=token, user=user)
@@ -359,6 +378,8 @@ def register(payload: RegisterIn) -> AuthOut:
         raise HTTPException(status_code=400, detail="name and email are required")
 
     with connect() as connection:
+        count = connection.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+        role: Role = "admin" if count == 0 else "user"
         try:
             connection.execute(
                 """
@@ -370,7 +391,39 @@ def register(payload: RegisterIn) -> AuthOut:
                     name,
                     email,
                     password_hash(payload.password),
-                    "Security Admin",
+                    role,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="email is already registered") from exc
+        row = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    return auth_response(row)
+
+
+@app.post("/admin/users", response_model=AuthOut, status_code=201)
+def create_user(payload: CreateUserIn, authorization: str | None = Header(default=None)) -> AuthOut:
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
+    init_db()
+    email = payload.email.strip().lower()
+    name = payload.name.strip()
+    if not email or not name:
+        raise HTTPException(status_code=400, detail="name and email are required")
+
+    with connect() as connection:
+        try:
+            connection.execute(
+                """
+                INSERT INTO users (id, name, email, password_hash, role, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"USR-{uuid4().hex[:10].upper()}",
+                    name,
+                    email,
+                    password_hash(payload.password),
+                    payload.role,
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
@@ -400,7 +453,8 @@ def me(authorization: str | None = Header(default=None)) -> dict[str, str]:
 
 @app.get("/users")
 def users(authorization: str | None = Header(default=None)) -> dict[str, object]:
-    get_auth_user(authorization)
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
     init_db()
     with connect() as connection:
         rows = connection.execute(
@@ -423,7 +477,8 @@ async def inspect_and_log(
     authorization: str | None = Header(default=None),
 ) -> AuditEvent:
     init_db()
-    get_auth_user(authorization)
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
     event = inspect_prompt(payload)
     remote_id = await write_remote(event)
     return write_local(event, remote_id)
@@ -435,7 +490,8 @@ async def create_audit_event(
     authorization: str | None = Header(default=None),
 ) -> AuditEvent:
     init_db()
-    get_auth_user(authorization)
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
     remote_id = await write_remote(payload)
     return write_local(payload, remote_id)
 
@@ -443,7 +499,8 @@ async def create_audit_event(
 @app.get("/audit/events", response_model=list[AuditEvent])
 def list_audit_events(authorization: str | None = Header(default=None)) -> list[AuditEvent]:
     init_db()
-    get_auth_user(authorization)
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin", "auditor"})
     with connect() as connection:
         rows = connection.execute(
             "SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT 200"
@@ -552,7 +609,8 @@ def audit_summary(authorization: str | None = Header(default=None)) -> dict[str,
 
 @app.get("/reports/export")
 def export_report(authorization: str | None = Header(default=None)) -> Response:
-    get_auth_user(authorization)
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin", "auditor"})
     init_db()
     with connect() as connection:
         rows = connection.execute(

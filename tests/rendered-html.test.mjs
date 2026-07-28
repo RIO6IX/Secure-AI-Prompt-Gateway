@@ -24,6 +24,9 @@ test("dashboard is wired to the audit backend instead of mock data", async () =>
   assert.match(dashboard, /No records in the backend yet/);
   assert.match(dashboard, /Prompt Monitor/);
   assert.match(dashboard, /setActiveView/);
+  assert.match(dashboard, /window\.location\.href = "\/audit-logs"/);
+  assert.match(dashboard, /window\.location\.href = "\/system-settings"/);
+  assert.match(dashboard, /window\.location\.href = "\/admin"/);
   assert.doesNotMatch(dashboard, /12,842|john\.doe@company\.com|API key detected in prompt/i);
 
   assert.match(auditRoute, /CREATE TABLE IF NOT EXISTS audit_events/);
@@ -31,6 +34,27 @@ test("dashboard is wired to the audit backend instead of mock data", async () =>
   assert.match(auditRoute, /SELECT[\s\S]+FROM audit_events/);
   assert.match(schema, /sqliteTable\("audit_events"/);
   assert.match(hosting, /"d1":\s*"DB"/);
+});
+
+test("separate audit, settings, and admin pages exist", async () => {
+  const [auditPage, settingsPage, adminPage, standalone, backend] = await Promise.all([
+    readFile(new URL("../app/audit-logs/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/system-settings/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/StandalonePages.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../python_gateway/app.py", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(auditPage, /<AuditLogsPage \/>/);
+  assert.match(settingsPage, /<SystemSettingsPage \/>/);
+  assert.match(adminPage, /<AdminPanelPage \/>/);
+  assert.match(standalone, /\/admin\/users/);
+  assert.match(standalone, /admin - all privileges/);
+  assert.match(standalone, /auditor - read only audit log/);
+  assert.match(standalone, /user - read only dashboard/);
+  assert.match(backend, /Role = Literal\["admin", "auditor", "user"\]/);
+  assert.match(backend, /require_role\(current_user, \{"admin"\}\)/);
+  assert.match(backend, /require_role\(current_user, \{"admin", "auditor"\}\)/);
 });
 
 test("login and register pages use the local Python backend", async () => {

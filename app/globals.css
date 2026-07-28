@@ -895,6 +895,7 @@ nav button.active {
   font-weight: 700;
 }
 
+.prompt-form input,
 .prompt-form select,
 .prompt-form textarea {
   width: 100%;
@@ -905,6 +906,11 @@ nav button.active {
 }
 
 .prompt-form select {
+  min-height: 2.7rem;
+  padding: 0 0.75rem;
+}
+
+.prompt-form input {
   min-height: 2.7rem;
   padding: 0 0.75rem;
 }
