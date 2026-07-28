@@ -5,11 +5,10 @@ import test from "node:test";
 const templateRoot = new URL("../", import.meta.url);
 
 test("dashboard is wired to the audit backend instead of mock data", async () => {
-  const [page, dashboard, auditRoute, schema, hosting] = await Promise.all([
+  const [page, dashboard, backend, hosting] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/AuditDashboard.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/audit/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../python_gateway/app.py", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
   ]);
 
@@ -29,11 +28,10 @@ test("dashboard is wired to the audit backend instead of mock data", async () =>
   assert.match(dashboard, /window\.location\.href = "\/admin"/);
   assert.doesNotMatch(dashboard, /12,842|john\.doe@company\.com|API key detected in prompt/i);
 
-  assert.match(auditRoute, /CREATE TABLE IF NOT EXISTS audit_events/);
-  assert.match(auditRoute, /INSERT INTO audit_events/);
-  assert.match(auditRoute, /SELECT[\s\S]+FROM audit_events/);
-  assert.match(schema, /sqliteTable\("audit_events"/);
-  assert.match(hosting, /"d1":\s*"DB"/);
+  assert.match(backend, /DB_PATH = BASE_DIR \/ "audit_logs.sqlite3"/);
+  assert.match(backend, /CREATE TABLE IF NOT EXISTS audit_events/);
+  assert.match(backend, /CREATE TABLE IF NOT EXISTS users/);
+  assert.match(hosting, /"d1":\s*null/);
 });
 
 test("separate audit, settings, and admin pages exist", async () => {

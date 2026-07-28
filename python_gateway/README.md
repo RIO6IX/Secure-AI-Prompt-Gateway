@@ -1,7 +1,7 @@
 # Python Audit Logging Service
 
-This service is the Python backend foundation for module 4 of the Secure AI Prompt Gateway.
-It detects and masks sensitive prompt data, stores a local SQLite audit copy, and posts each audit event into the hosted dashboard backend.
+This FastAPI service is the backend foundation for the Secure AI Prompt Gateway.
+It detects and masks sensitive prompt data, stores users and audit logs in local SQLite, and exposes the APIs used by the frontend.
 
 Run locally:
 
@@ -19,11 +19,10 @@ Useful endpoints:
 - `POST /audit/events` writes a prebuilt audit event
 - `GET /audit/events` reads the local Python service audit copy
 
-The hosted backend URL defaults to:
+SQLite database:
 
 ```text
-https://secure-ai-prompt-gateway.rio6ix.chatgpt.site/api/audit
+python_gateway/audit_logs.sqlite3
 ```
 
-Override it with `REMOTE_AUDIT_API_URL` when deploying to a different dashboard URL.
-For a private hosted dashboard, also set `REMOTE_AUDIT_BEARER_TOKEN` so the Python service can write through the site access layer without making the dashboard public.
+The database and required tables are created automatically when FastAPI starts.

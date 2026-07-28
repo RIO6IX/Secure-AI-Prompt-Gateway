@@ -1,6 +1,14 @@
 # Secure AI Prompt Gateway
 
-Local company-style system for detecting sensitive data in AI prompts, masking it, and storing audit logs.
+Local company-style system for detecting sensitive data in AI prompts, masking it, and storing audit logs in SQLite.
+
+## Database
+
+This project uses **SQLite** through the FastAPI backend.
+
+- Database file: `python_gateway/audit_logs.sqlite3`
+- Tables created automatically: `users`, `audit_events`
+- The frontend does not write to its own database. It reads/writes through FastAPI at `http://localhost:8000`.
 
 ## Local Hosting
 
@@ -38,6 +46,12 @@ The frontend reads the local backend at `http://localhost:8000` by default. To u
 - `POST /inspect`
 - `GET /audit/events`
 - `GET /health`
+ 
+## Roles
+
+- `admin`: all privileges, including creating users and writing audit events
+- `auditor`: read-only audit logs and report export
+- `user`: read-only dashboard summary
 
 ## Test Prompt
 
