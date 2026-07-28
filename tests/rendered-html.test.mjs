@@ -4,40 +4,26 @@ import test from "node:test";
 
 const templateRoot = new URL("../", import.meta.url);
 
-async function render(path = "/") {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+test("dashboard is wired to the audit backend instead of mock data", async () => {
+  const [page, dashboard, auditRoute, schema, hosting] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/AuditDashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/audit/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
+  ]);
 
-  return worker.fetch(
-    new Request(`http://localhost${path}`, {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
-  );
-}
+  assert.match(page, /<AuditDashboard \/>/);
+  assert.match(dashboard, /fetch\("\/api\/audit"/);
+  assert.match(dashboard, /Ingest Test Event/);
+  assert.match(dashboard, /No audit events in the backend yet/);
+  assert.doesNotMatch(dashboard, /12,842|john\.doe@company\.com|API key detected in prompt/i);
 
-test("server-renders the security dashboard", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
-  assert.match(html, /<title>Secure AI Prompt Gateway Dashboard<\/title>/i);
-  assert.match(html, /Security Dashboard/);
-  assert.match(html, /Audit Logs/);
-  assert.match(html, /API key detected in prompt/);
-  assert.match(html, /sk-proj-\*+/);
-  assert.match(html, /Security Policy &amp; Access Control Activity/);
-  assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton|codex-preview/i);
+  assert.match(auditRoute, /CREATE TABLE IF NOT EXISTS audit_events/);
+  assert.match(auditRoute, /INSERT INTO audit_events/);
+  assert.match(auditRoute, /SELECT[\s\S]+FROM audit_events/);
+  assert.match(schema, /sqliteTable\("audit_events"/);
+  assert.match(hosting, /"d1":\s*"DB"/);
 });
 
 test("removes starter preview assets and metadata", async () => {
@@ -53,4 +39,3 @@ test("removes starter preview assets and metadata", async () => {
 
   await assert.rejects(access(new URL("app/_sites-preview/SkeletonPreview.tsx", templateRoot)));
 });
-
