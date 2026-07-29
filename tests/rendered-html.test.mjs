@@ -19,7 +19,7 @@ test("dashboard is wired to the audit backend instead of mock data", async () =>
   assert.match(dashboard, /\/reports\/export/);
   assert.match(dashboard, /API_BASE_URL/);
   assert.match(dashboard, /TOKEN_KEY/);
-  assert.match(dashboard, /Ingest Test Event/);
+  assert.doesNotMatch(dashboard, /Ingest Test Event|dashboard-live-ingest|sk-proj-demo-secret-value/);
   assert.match(dashboard, /No records in the backend yet/);
   assert.match(dashboard, /Prompt Monitor/);
   assert.match(dashboard, /setActiveView/);
@@ -47,11 +47,14 @@ test("separate audit, settings, and admin pages exist", async () => {
   assert.match(settingsPage, /<SystemSettingsPage \/>/);
   assert.match(adminPage, /<AdminPanelPage \/>/);
   assert.match(standalone, /\/admin\/users/);
+  assert.match(standalone, /method: "DELETE"/);
+  assert.match(standalone, /Delete user/);
   assert.match(standalone, /admin - all privileges/);
   assert.match(standalone, /auditor - read only audit log/);
   assert.match(standalone, /user - read only dashboard/);
   assert.match(backend, /Role = Literal\["admin", "auditor", "user"\]/);
   assert.match(backend, /require_role\(current_user, \{"admin"\}\)/);
+  assert.match(backend, /@app\.delete\("\/admin\/users\/\{user_id\}"\)/);
   assert.match(backend, /require_role\(current_user, \{"admin", "auditor"\}\)/);
 });
 

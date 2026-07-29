@@ -433,6 +433,23 @@ def create_user(payload: CreateUserIn, authorization: str | None = Header(defaul
     return auth_response(row)
 
 
+@app.delete("/admin/users/{user_id}")
+def delete_user(user_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
+    init_db()
+
+    with connect() as connection:
+        row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="user not found")
+        if row["email"] == current_user["email"]:
+            raise HTTPException(status_code=400, detail="you cannot delete your own account")
+        connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    return {"status": "deleted", "id": user_id}
+
+
 @app.post("/auth/login", response_model=AuthOut)
 def login(payload: LoginIn) -> AuthOut:
     init_db()

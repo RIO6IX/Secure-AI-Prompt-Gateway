@@ -196,6 +196,19 @@ export function AdminPanelPage() {
     }
   }
 
+  async function deleteUser(userId: string, email: string) {
+    setNotice("");
+    setError("");
+    if (!window.confirm(`Delete user ${email}?`)) return;
+    try {
+      await apiFetch(`/admin/users/${userId}`, { method: "DELETE" });
+      setNotice("User deleted successfully.");
+      await load();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Could not delete user");
+    }
+  }
+
   useEffect(() => { void load(); }, []);
 
   return (
@@ -222,8 +235,16 @@ export function AdminPanelPage() {
         <article className="panel audit-panel">
           <div className="panel-heading"><div><h2>Existing Users</h2><p>Local FastAPI accounts.</p></div></div>
           <div className="simple-table">
-            <div><strong>Name</strong><strong>Email</strong><strong>Role</strong><strong>Prompts</strong><strong>Blocked</strong></div>
-            {users.map((item) => <div key={String(item.email)}><span>{item.name}</span><span>{item.email}</span><span>{item.role}</span><span>{item.promptCount}</span><span>{item.blockedCount}</span></div>)}
+            <div><strong>Name</strong><strong>Email</strong><strong>Role</strong><strong>Prompts</strong><strong>Action</strong></div>
+            {users.map((item) => (
+              <div key={String(item.email)}>
+                <span>{item.name}</span>
+                <span>{item.email}</span>
+                <span>{item.role}</span>
+                <span>{item.promptCount}</span>
+                <span><button className="danger-button" type="button" onClick={() => void deleteUser(String(item.id), String(item.email))}>Delete</button></span>
+              </div>
+            ))}
           </div>
         </article>
       </section>

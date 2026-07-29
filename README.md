@@ -55,4 +55,4 @@ The frontend reads the local backend at `http://localhost:8000` by default. To u
 
 ## Test Prompt
 
-After registering, use the dashboard button **Ingest Test Event** or post to `/inspect` with a prompt containing sensitive data. The backend masks values like API keys and stores only the masked output in audit logs.
+After registering, use **Prompt Monitor** or post to `/inspect` with a real prompt containing sensitive data. The backend masks values like API keys and stores only the masked output in audit logs.

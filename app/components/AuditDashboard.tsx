@@ -172,38 +172,6 @@ export function AuditDashboard() {
     window.location.href = "/login";
   }
 
-  async function ingestSampleEvent() {
-    setPosting(true);
-    setNotice("");
-    try {
-      await apiFetch("/audit", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          actor: user?.email ?? "security.demo@company.com",
-          department: "Security",
-          service: "ChatGPT Enterprise",
-          action: "Prompt blocked",
-          status: "Blocked",
-          risk: "High",
-          riskScore: 92,
-          finding: "API Key",
-          category: "Credentials & Secrets",
-          policyRule: "Block credentials and tokens",
-          maskedOutput: "sk-proj-********************************",
-          originalPrompt: "Deploy using sk-proj-demo-secret-value",
-          source: "dashboard-live-ingest",
-        }),
-      });
-      setNotice("Test audit event written to FastAPI backend.");
-      await load();
-    } catch (postError) {
-      setError(postError instanceof Error ? postError.message : "Event write failed");
-    } finally {
-      setPosting(false);
-    }
-  }
-
   async function inspectPrompt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPosting(true);
@@ -331,9 +299,6 @@ export function AuditDashboard() {
           </div>
           <div className="topbar-actions" aria-label="Dashboard controls">
             <button type="button" onClick={() => void load()}>Refresh</button>
-            <button type="button" onClick={() => void ingestSampleEvent()} disabled={posting}>
-              {posting ? "Working..." : "Ingest Test Event"}
-            </button>
             <button type="button" onClick={() => void exportReport()}>Export CSV</button>
             <div className="admin-chip">
               <span />
