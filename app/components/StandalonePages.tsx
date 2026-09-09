@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { API_BASE_URL, TOKEN_KEY, USER_KEY, authHeaders, getStoredToken } from "../lib/api";
 
 type Role = "admin" | "auditor" | "user";
@@ -49,44 +50,34 @@ function PageChrome({
 
   useEffect(() => {
     const raw = window.localStorage.getItem(USER_KEY);
-    if (raw) setUser(JSON.parse(raw) as Row);
+    const timer = window.setTimeout(() => {
+      if (raw) setUser(JSON.parse(raw) as Row);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   return (
-    <main className="dashboard-shell page-only-shell">
-      <aside className="sidebar">
-        <div className="brand-lockup">
-          <div className="brand-mark">S</div>
+    <main className="secure-admin-page">
+      <header className="secure-admin-header">
+        <div className="secure-brand">
+          <span className="secure-shield small" aria-hidden="true">S</span>
           <div>
             <strong>Secure AI</strong>
-            <span>Prompt Gateway</span>
+            <small>Administration</small>
           </div>
         </div>
-        <nav aria-label="Page navigation">
-          <button type="button" onClick={() => { window.location.href = "/"; }}><span className="nav-dot" />Dashboard</button>
-          <button type="button" className={title === "Audit Logs" ? "active" : ""} onClick={() => { window.location.href = "/audit-logs"; }}><span className="nav-dot" />Audit Logs</button>
-          <button type="button" className={title === "System Settings" ? "active" : ""} onClick={() => { window.location.href = "/system-settings"; }}><span className="nav-dot" />System Settings</button>
-          {user?.role === "admin" ? <button type="button" className={title === "Admin Panel" ? "active" : ""} onClick={() => { window.location.href = "/admin"; }}><span className="nav-dot" />Admin Panel</button> : null}
+        <nav className="secure-admin-nav" aria-label="Page navigation">
+          <Link href="/">Back to chat</Link>
+          <Link className={title === "Privacy-safe audit dashboard" ? "active" : ""} href="/audit-logs">Audit logs</Link>
+          <Link className={title === "System Settings" ? "active" : ""} href="/system-settings">System settings</Link>
+          {user?.role === "admin" ? <Link className={title === "Admin Panel" ? "active" : ""} href="/admin">Users</Link> : null}
+          <button type="button" onClick={logout}>Sign out</button>
         </nav>
-      </aside>
-      <section className="workspace">
-        <header className="topbar">
-          <div>
-            <p>Secure AI Prompt Gateway</p>
-            <h1>{title}</h1>
-            <span>{description}</span>
-          </div>
-          <div className="topbar-actions">
-            <div className="admin-chip">
-              <span />
-              <div>
-                <strong>{String(user?.name ?? "sec.admin")}</strong>
-                <small>{String(user?.role ?? "role")}</small>
-              </div>
-            </div>
-            <button type="button" onClick={logout}>Logout</button>
-          </div>
-        </header>
+      </header>
+      <section className="secure-admin-content">
+        <p className="secure-eyebrow">Administrator workspace</p>
+        <h1>{title}</h1>
+        <p className="secure-admin-description">{description}</p>
         {children}
       </section>
     </main>
@@ -96,6 +87,11 @@ function PageChrome({
 export function AuditLogsPage() {
   const [events, setEvents] = useState<Row[]>([]);
   const [error, setError] = useState("");
+  const [userFilter, setUserFilter] = useState("");
+  const [decisionFilter, setDecisionFilter] = useState("");
+  const [riskFilter, setRiskFilter] = useState("");
+  const [page, setPage] = useState(0);
+  const pageSize = 20;
 
   async function load() {
     try {
@@ -107,25 +103,61 @@ export function AuditLogsPage() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const filteredEvents = useMemo(() => events.filter((event) => {
+    const actorMatches = String(event.actor).toLowerCase().includes(userFilter.trim().toLowerCase());
+    const decisionMatches = !decisionFilter || String(event.status).toLowerCase() === decisionFilter.toLowerCase();
+    const riskMatches = !riskFilter || String(event.risk).toLowerCase() === riskFilter.toLowerCase();
+    return actorMatches && decisionMatches && riskMatches;
+  }), [events, userFilter, decisionFilter, riskFilter]);
+  const visibleEvents = filteredEvents.slice(page * pageSize, (page + 1) * pageSize);
+  const first = filteredEvents.length ? page * pageSize + 1 : 0;
+  const last = Math.min((page + 1) * pageSize, filteredEvents.length);
+  const count = (status: string) => filteredEvents.filter((event) => String(event.status).toLowerCase() === status).length;
 
   return (
-    <PageChrome title="Audit Logs" description="Separate audit log webpage. Admin and auditor roles can read this page.">
+    <PageChrome title="Privacy-safe audit dashboard" description="Security metadata only. Raw detected values and private credentials are not displayed.">
       {error ? <div className="backend-error">{error}</div> : null}
-      <article className="panel audit-panel single-view">
-        <div className="panel-heading">
-          <div><h2>Audit Log Records</h2><p>Read-only masked event history from FastAPI SQLite.</p></div>
-          <button type="button" onClick={() => void load()}>Reload</button>
+      <section className="secure-audit-metrics" aria-label="Audit summary">
+        <div><small>Filtered events</small><strong>{filteredEvents.length}</strong></div>
+        <div><small>Allowed</small><strong>{count("allowed")}</strong></div>
+        <div><small>Sanitized</small><strong>{count("sanitized")}</strong></div>
+        <div><small>Blocked</small><strong>{count("blocked")}</strong></div>
+      </section>
+      <article className="secure-audit-panel">
+        <div className="secure-audit-title">
+          <div><p className="secure-eyebrow">Security activity</p><h2>Audit events</h2></div>
+          <button type="button" onClick={() => void load()}>Refresh</button>
         </div>
-        <div className="audit-table">
-          <div className="audit-header"><span>Event ID</span><span>Time</span><span>User</span><span>Action</span><span>Finding</span><span>Masked Output</span><span>Status</span></div>
-          {events.map((event) => (
-            <div className="audit-row" key={String(event.id)}>
-              <span>{event.id}</span><span>{event.timestamp}</span><span>{event.actor}</span><span>{event.action}</span>
-              <span><em className={`risk-badge ${String(event.risk).toLowerCase()}`}>{event.finding}</em></span>
-              <span>{event.maskedOutput}</span><span>{event.status}</span>
-            </div>
-          ))}
+        <form className="secure-audit-filters" onSubmit={(event) => { event.preventDefault(); setPage(0); }}>
+          <label>User<input value={userFilter} onChange={(event) => { setUserFilter(event.target.value); setPage(0); }} placeholder="All users" /></label>
+          <label>Decision<select value={decisionFilter} onChange={(event) => { setDecisionFilter(event.target.value); setPage(0); }}><option value="">All decisions</option><option value="Allowed">Allowed</option><option value="Sanitized">Sanitized</option><option value="Blocked">Blocked</option></select></label>
+          <label>Risk level<select value={riskFilter} onChange={(event) => { setRiskFilter(event.target.value); setPage(0); }}><option value="">All risk levels</option><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></label>
+          <button type="submit">Apply filters</button>
+        </form>
+        <div className="secure-table-wrap">
+          <table>
+            <thead><tr><th>Time</th><th>User</th><th>Decision</th><th>Risk</th><th>Category</th><th>Finding</th><th>Status</th></tr></thead>
+            <tbody>{visibleEvents.map((event) => (
+              <tr key={String(event.id)}>
+                <td>{new Date(String(event.timestamp)).toLocaleString()}</td><td>{event.actor}</td><td>{event.action}</td>
+                <td><span className={`secure-table-badge ${String(event.risk).toLowerCase()}`}>{event.risk}</span></td>
+                <td>{event.category}</td><td>{event.finding}</td><td><span className={`secure-table-badge ${String(event.status).toLowerCase()}`}>{event.status}</span></td>
+              </tr>
+            ))}</tbody>
+          </table>
+          {visibleEvents.length === 0 ? <p className="secure-audit-empty">No audit events match these filters.</p> : null}
+        </div>
+        <div className="secure-pagination">
+          <span>Showing {first}–{last} of {filteredEvents.length}</span>
+          <div>
+            <button type="button" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>Previous</button>
+            <button type="button" disabled={last >= filteredEvents.length} onClick={() => setPage((current) => current + 1)}>Next</button>
+          </div>
         </div>
       </article>
     </PageChrome>
@@ -209,7 +241,10 @@ export function AdminPanelPage() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   return (
     <PageChrome title="Admin Panel" description="Create users and assign admin, auditor, or user roles.">
