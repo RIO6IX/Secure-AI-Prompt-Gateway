@@ -1,8 +1,11 @@
 # Security Policy and Access Control Engine
 
-Owner: H. M. Shaheed — IT23664258  
-Project: Secure AI Prompt Gateway — IE3092 Information Security Project  
-Implementation branch: `shaheed`  
+Owner: H. M. Shaheed — IT23664258
+
+Project: Secure AI Prompt Gateway — IE3092 Information Security Project
+
+Implementation branch: `shaheed`
+
 Revision: 9 September 2026
 
 ## 3.4 Component 3
