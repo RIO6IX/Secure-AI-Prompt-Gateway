@@ -134,6 +134,7 @@ def check_password(password: str, stored: str) -> bool:
 
 
 def get_auth_user(authorization: str | None) -> dict[str, str]:
+<<<<<<< HEAD
 
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Login required")
@@ -148,6 +149,14 @@ def get_auth_user(authorization: str | None) -> dict[str, str]:
         "name": str(payload["name"]),
         "role": normalize_role(str(payload["role"]))
     }
+=======
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Login required")
+    payload = verify_token(authorization.split(" ", 1)[1])
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired login")
+    return {"email": str(payload["email"]), "name": str(payload["name"]), "role": normalize_role(str(payload["role"]))}
+>>>>>>> 1ac54ced1136586a8d974dbfa288251602ce6824
 
 
 def normalize_role(role: str) -> Role:
@@ -165,13 +174,18 @@ def require_role(current_user: dict[str, str], allowed: set[Role]) -> None:
 DETECTORS: list[tuple[str, str, re.Pattern[str], str]] = [
     ("Credentials & Secrets", "OpenAI/API Key", re.compile(r"\b(sk-(?:proj-)?[A-Za-z0-9_-]{16,})\b"), "Block credentials and tokens"),
     ("Credentials & Secrets", "AWS Access Key", re.compile(r"\b(AKIA[0-9A-Z]{16})\b"), "Block credentials and tokens"),
+<<<<<<< HEAD
     ("Credentials & Secrets", "Password", re.compile(r"(?i)\b(password|pwd)\b\s*(?:is|:|=)?\s*([^\s,;]{6,})"), "Block credentials and tokens"),
+=======
+    ("Credentials & Secrets", "Password", re.compile(r"(?i)\b(password|pwd)\s*[:=]\s*([^\s,;]{6,})"), "Block credentials and tokens"),
+>>>>>>> 1ac54ced1136586a8d974dbfa288251602ce6824
     ("Financial (PCI)", "Credit Card Number", re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "Mask PCI data before AI submission"),
     ("PII", "Email Address", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "Mask PII before AI submission"),
     ("PII", "Phone Number", re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b"), "Mask PII before AI submission"),
     ("Source Code / IP", "Private Source Code", re.compile(r"(?s)\b(function|class|def|const|let|var)\b.{20,}"), "Warn on source code or internal URLs"),
 ]
 
+<<<<<<< HEAD
 # =====================================================
 # Risk Assessment Engine
 # =====================================================
@@ -237,12 +251,15 @@ def determine_action(level: RiskLevel) -> str:
         return "Prompt sanitized"
 
     return "Prompt allowed"
+=======
+>>>>>>> 1ac54ced1136586a8d974dbfa288251602ce6824
 
 def connect() -> sqlite3.Connection:
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     return connection
 
+<<<<<<< HEAD
 # =====================================================
 # Prompt Sanitization Engine
 # =====================================================
@@ -268,6 +285,8 @@ def sanitize_prompt(prompt: str) -> str:
         sanitized = pattern.sub(replacement, sanitized)
 
     return sanitized
+=======
+>>>>>>> 1ac54ced1136586a8d974dbfa288251602ce6824
 
 def init_db() -> None:
     with connect() as connection:
@@ -337,6 +356,7 @@ def inspect_prompt(payload: PromptInspectionIn) -> AuditEventIn:
             matches.append((category, finding, policy))
 
     if not matches:
+<<<<<<< HEAD
         category, finding, policy = (
         "Clean",
         "No sensitive data detected",
@@ -357,6 +377,20 @@ def inspect_prompt(payload: PromptInspectionIn) -> AuditEventIn:
         action = determine_action(risk)
 
     masked = sanitize_prompt(masked)
+=======
+        category, finding, policy = "Clean", "No sensitive data detected", "Default prompt leakage policy"
+        risk: RiskLevel = "Low"
+        status = "Allowed"
+        action = "Prompt allowed"
+        score = 8
+    else:
+        category, finding, policy = matches[0]
+        secret_hit = category == "Credentials & Secrets"
+        risk = "High" if secret_hit else "Medium"
+        status = "Blocked" if secret_hit else "Sanitized"
+        action = "Prompt blocked" if secret_hit else "Prompt sanitized"
+        score = 92 if secret_hit else 58
+>>>>>>> 1ac54ced1136586a8d974dbfa288251602ce6824
 
     return AuditEventIn(
         actor=payload.actor,
@@ -510,7 +544,10 @@ def register(payload: RegisterIn) -> AuthOut:
 @app.post("/admin/users", response_model=AuthOut, status_code=201)
 def create_user(payload: CreateUserIn, authorization: str | None = Header(default=None)) -> AuthOut:
     current_user = get_auth_user(authorization)
+<<<<<<< HEAD
     print("Current User:", current_user)
+=======
+>>>>>>> 1ac54ced1136586a8d974dbfa288251602ce6824
     require_role(current_user, {"admin"})
     init_db()
     email = payload.email.strip().lower()
@@ -556,7 +593,11 @@ def delete_user(user_id: str, authorization: str | None = Header(default=None)) 
 
     return {"status": "deleted", "id": user_id}
 
+<<<<<<< HEAD
  
+=======
+
+>>>>>>> 1ac54ced1136586a8d974dbfa288251602ce6824
 @app.post("/auth/login", response_model=AuthOut)
 def login(payload: LoginIn) -> AuthOut:
     init_db()
@@ -600,6 +641,7 @@ async def inspect_and_log(
     payload: PromptInspectionIn,
     authorization: str | None = Header(default=None),
 ) -> AuditEvent:
+<<<<<<< HEAD
 
     init_db()
 
@@ -614,6 +656,13 @@ async def inspect_and_log(
 
     remote_id = await write_remote(event)
 
+=======
+    init_db()
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
+    event = inspect_prompt(payload)
+    remote_id = await write_remote(event)
+>>>>>>> 1ac54ced1136586a8d974dbfa288251602ce6824
     return write_local(event, remote_id)
 
 
