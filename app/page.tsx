@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { AuditDashboard } from "./components/AuditDashboard";
+import { SecureChatWorkspace } from "./components/SecureChatWorkspace";
 
 export const metadata: Metadata = {
-  title: "Secure AI Prompt Gateway Dashboard",
+  title: "Secure AI Prompt Gateway",
   description:
-    "Database-backed audit logging and security monitoring dashboard for sensitive prompt leakage prevention.",
+    "A private workspace that inspects sensitive prompts before external AI use.",
 };
 
 export default function Home() {
-  return <AuditDashboard />;
+  return <SecureChatWorkspace />;
 }
