@@ -49,3 +49,8 @@ next-env.d.ts
 __pycache__/
 *.pyc
 python_gateway/audit_logs.sqlite3
+.venv/
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.tsbuildinfo
