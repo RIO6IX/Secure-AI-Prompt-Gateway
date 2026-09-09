@@ -18,13 +18,21 @@ npm ci
 npm run dev
 ```
 
+For a disposable local demonstration database, you may replace the interactive administrator bootstrap with:
+
+```powershell
+.\.venv\Scripts\python.exe -m python_gateway.setup_demo
+```
+
+This command works only when the local database has no accounts. It creates synthetic administrator, user, approver and auditor identities, generates a random password, and writes the credentials to the Git-ignored `.local-demo/credentials.txt`. It refuses to modify a database that already contains users. Never reuse these accounts or their shared demonstration password outside local testing.
+
 Open the local frontend URL printed by the development server. Sign in with the administrator you created. Existing databases retain their accounts; the bootstrap command refuses to create another initial admin. Existing users must sign in again because the old self-contained tokens have been replaced.
 
 No accounts or credentials are committed. The application database and virtual environment are ignored by Git. Before using an existing group database, stop the backend and make a backup copy of `python_gateway/audit_logs.sqlite3` outside version control. The additive migration runs automatically at startup.
 
 ## Suggested demonstration
 
-1. As administrator, use Admin Panel to create a user, approver and auditor with synthetic email addresses and passwords. Use separate browser profiles or sign out between identities.
+1. As administrator, use Admin Panel to create a user, approver and auditor with synthetic email addresses and passwords, or use the disposable setup command above. Use separate browser profiles or sign out between identities.
 2. As user, open Security Controls and inspect `Explain least privilege`. Expect `ALLOW`.
 3. Inspect `Contact fictional.person@example.test for details`. Expect `SANITIZE`, with the email fully replaced by `[REDACTED]`.
 4. Inspect `password=FictionalPass123!`. Expect `BLOCK`, no outbound content and no permission to send.
@@ -91,4 +99,4 @@ The rule editor supports action, inclusive score limits and enabled state. The p
 
 Be ready to explain authentication versus authorization; why a bearer token is hashed at rest; why roles come from the database; why a removed rule blocks; why credential blocks cannot be weakened; how policy versions prevent stale updates; and how a transaction prevents approval replay. Explain the detector limitations honestly and distinguish inspection from an actual external AI request.
 
-Your proposal text is in `docs/COMPONENT3_PROPOSAL.md`. It is kept inside your branch so changes are reviewable in Git. The original group Word document outside the repository is unchanged.
+Your reviewable proposal source is in `docs/COMPONENT3_PROPOSAL.md`; the generated submission copy is `docs/Shaheed_Component3_Proposal.docx`. Rebuild it with `python scripts/build_component3_proposal.py` after changing the source. Both are kept inside your branch, and the original group Word document outside the repository is unchanged.

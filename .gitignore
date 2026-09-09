@@ -50,6 +50,7 @@ __pycache__/
 *.pyc
 python_gateway/audit_logs.sqlite3
 .venv/
+.local-demo/
 *.sqlite3-journal
 *.sqlite3-wal
 *.sqlite3-shm
