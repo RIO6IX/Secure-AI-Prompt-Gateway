@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Secure AI Prompt Gateway</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+
+    <div class="header">
+
+    <div class="brand">
+
+        <div class="brand-logo">
+            S
+        </div>
+
+        <div class="brand-text">
+
+            <div class="brand-title">
+                SECURE AI
+            </div>
+
+            <div class="brand-subtitle">
+                PROMPT GATEWAY
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+    <div class="card">
+
+        <h3> Backend Status</h3>
+
+        <p id="backendStatus" class="connected">Checking...</p>
+
+    </div>
+
+    <div class="card" id="loginCard">
+
+        <h3> Login</h3>
+
+        <input
+            id="email"
+            type="email"
+            placeholder="Email Address">
+
+        <input
+            id="password"
+            type="password"
+            placeholder="Password">
+
+        <button id="loginButton">
+            Login
+        </button>
+
+    </div>
+
+    <div class="card">
+
+    <div class="user-header">
+
+        <h3>User</h3>
+
+        <button id="logoutButton" class="logout-btn">
+            Logout
+        </button>
+
+    </div>
+
+    <p id="userStatus">
+        Not Logged In
+    </p>
+
+</div>
+
+    <div class="card">
+
+        <h3> Prompt Inspection</h3>
+
+        <textarea
+            id="promptInput"
+            rows="4"
+            placeholder="Enter your AI prompt..."></textarea>
+
+        <button id="inspectButton">
+             Inspect Prompt
+        </button>
+
+    </div>
+
+    <div class="card">
+
+    <h3>Security Analysis</h3>
+
+    <div class="metric">
+
+        <span>Risk</span>
+
+        <span id="riskLevel" class="risk-badge">Waiting...</span>
+
+    </div>
+
+    <div class="metric">
+
+        <span>Risk Score</span>
+
+        <span id="riskScore">-- / 100</span>
+
+    </div>
+
+    <div class="progress">
+
+        <div id="scoreBar" class="progress-fill"></div>
+
+    </div>
+
+    <div class="metric">
+
+        <span>Category</span>
+
+        <span id="category">None</span>
+
+    </div>
+
+    <div class="metric">
+
+        <span>Finding</span>
+
+        <span id="finding">None</span>
+
+    </div>
+
+    <div class="metric">
+
+        <span>Status</span>
+
+        <span id="status">Waiting...</span>
+
+    </div>
+
+    <div class="metric">
+
+        <span>Action</span>
+
+        <span id="action">No inspection yet</span>
+
+    </div>
+
+    <hr>
+
+    <h4>Sanitized Prompt</h4>
+
+    <textarea
+        id="sanitizedOutput"
+        rows="4"
+        readonly
+        placeholder="Sanitized prompt will appear here..."></textarea>
+
+</div>
+
+    <script src="popup.js"></script>
+
+</body>
+
+</html>

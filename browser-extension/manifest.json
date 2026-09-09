@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "Secure AI Prompt Gateway",
+  "version": "1.0.0",
+  "description": "Protects sensitive prompts before they are sent to AI services.",
+
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+
+  "host_permissions": [
+    "http://localhost:8000/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Secure AI Prompt Gateway"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://gemini.google.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://claude.ai/*",
+        "https://www.perplexity.ai/*"
+      ],
+      "js": [
+        "content.js"
+      ]
+    }
+  ],
+
+  "web_accessible_resources": [
+  {
+    "resources": [
+      "inject.js"
+    ],
+    "matches": [
+      "<all_urls>"
+    ]
+  }
+]
+}
