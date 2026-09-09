@@ -23,9 +23,9 @@ test("dashboard is wired to the audit backend instead of mock data", async () =>
   assert.match(dashboard, /No records in the backend yet/);
   assert.match(dashboard, /Prompt Monitor/);
   assert.match(dashboard, /setActiveView/);
-  assert.match(dashboard, /window\.location\.href = "\/audit-logs"/);
-  assert.match(dashboard, /window\.location\.href = "\/system-settings"/);
-  assert.match(dashboard, /window\.location\.href = "\/admin"/);
+  assert.match(dashboard, /window\.location\.assign\("\/audit-logs"\)/);
+  assert.match(dashboard, /window\.location\.assign\("\/system-settings"\)/);
+  assert.match(dashboard, /window\.location\.assign\("\/admin"\)/);
   assert.doesNotMatch(dashboard, /12,842|john\.doe@company\.com|API key detected in prompt/i);
 
   assert.match(backend, /DB_PATH = BASE_DIR \/ "audit_logs.sqlite3"/);
@@ -51,8 +51,9 @@ test("separate audit, settings, and admin pages exist", async () => {
   assert.match(standalone, /Delete user/);
   assert.match(standalone, /admin - all privileges/);
   assert.match(standalone, /auditor - read only audit log/);
-  assert.match(standalone, /user - read only dashboard/);
-  assert.match(backend, /Role = Literal\["admin", "auditor", "user"\]/);
+  assert.match(standalone, /user - submit prompts/);
+  assert.match(standalone, /approver - review requests/);
+  assert.match(backend, /Role = Literal\["admin", "auditor", "user", "approver"\]/);
   assert.match(backend, /require_role\(current_user, \{"admin"\}\)/);
   assert.match(backend, /@app\.delete\("\/admin\/users\/\{user_id\}"\)/);
   assert.match(backend, /require_role\(current_user, \{"admin", "auditor"\}\)/);

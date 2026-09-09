@@ -3,16 +3,17 @@
 import { FormEvent, useEffect, useState } from "react";
 import { API_BASE_URL, TOKEN_KEY, USER_KEY, authHeaders, getStoredToken } from "../lib/api";
 
-type Role = "admin" | "auditor" | "user";
+type Role = "admin" | "auditor" | "user" | "approver";
 type Row = Record<string, string | number | boolean | null>;
 
-function logout() {
+async function logout() {
+  await fetch(`${API_BASE_URL}/auth/logout`, { method: "POST", headers: authHeaders() }).catch(() => undefined);
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(USER_KEY);
   window.location.href = "/login";
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getStoredToken();
   if (!token) {
     window.location.href = "/login";
@@ -36,7 +37,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-function PageChrome({
+export function PageChrome({
   title,
   description,
   children,
@@ -48,8 +49,7 @@ function PageChrome({
   const [user, setUser] = useState<Row | null>(null);
 
   useEffect(() => {
-    const raw = window.localStorage.getItem(USER_KEY);
-    if (raw) setUser(JSON.parse(raw) as Row);
+    void apiFetch<Row>("/auth/me").then(setUser).catch(() => undefined);
   }, []);
 
   return (
@@ -63,6 +63,7 @@ function PageChrome({
           </div>
         </div>
         <nav aria-label="Page navigation">
+          <button type="button" onClick={() => { window.location.href = "/security"; }}>Security Controls</button>
           <button type="button" onClick={() => { window.location.href = "/"; }}><span className="nav-dot" />Dashboard</button>
           <button type="button" className={title === "Audit Logs" ? "active" : ""} onClick={() => { window.location.href = "/audit-logs"; }}><span className="nav-dot" />Audit Logs</button>
           <button type="button" className={title === "System Settings" ? "active" : ""} onClick={() => { window.location.href = "/system-settings"; }}><span className="nav-dot" />System Settings</button>
@@ -107,7 +108,9 @@ export function AuditLogsPage() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void apiFetch<Row[]>("/audit/events").then(setEvents).catch((e: Error) => setError(e.message));
+  }, []);
 
   return (
     <PageChrome title="Audit Logs" description="Separate audit log webpage. Admin and auditor roles can read this page.">
@@ -209,24 +212,27 @@ export function AdminPanelPage() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    void apiFetch<{ users: Row[] }>("/users").then(payload => setUsers(payload.users)).catch((e: Error) => setError(e.message));
+  }, []);
 
   return (
-    <PageChrome title="Admin Panel" description="Create users and assign admin, auditor, or user roles.">
+    <PageChrome title="Admin Panel" description="Create accounts, assign roles, and revoke access.">
       {notice ? <div className="success-state">{notice}</div> : null}
       {error ? <div className="backend-error">{error}</div> : null}
       <section className="content-grid single-view">
         <article className="panel tool-panel">
-          <div className="panel-heading"><div><h2>Create User</h2><p>Admin has all privileges. Auditor reads audit logs. User is read-only dashboard.</p></div></div>
+          <div className="panel-heading"><div><h2>Create User</h2><p>Administrators manage access. Auditors read logs. Users submit prompts. Approvers review other users’ requests.</p></div></div>
           <form className="prompt-form" onSubmit={createUser}>
             <label>Name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
             <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-            <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} required /></label>
+            <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={12} maxLength={128} required /></label>
             <label>Role
               <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
                 <option value="admin">admin - all privileges</option>
                 <option value="auditor">auditor - read only audit log</option>
-                <option value="user">user - read only dashboard</option>
+                <option value="user">user - submit prompts</option>
+                <option value="approver">approver - review requests</option>
               </select>
             </label>
             <button type="submit">Create User</button>
@@ -240,9 +246,13 @@ export function AdminPanelPage() {
               <div key={String(item.email)}>
                 <span>{item.name}</span>
                 <span>{item.email}</span>
-                <span>{item.role}</span>
+                <span><select aria-label={`Role for ${item.email}`} value={String(item.role)} onChange={event => {
+                  void apiFetch(`/admin/users/${item.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ role: event.target.value, active: Boolean(item.active) }) }).then(load).catch((e: Error) => setError(e.message));
+                }}>{["admin", "auditor", "user", "approver"].map(r => <option key={r}>{r}</option>)}</select></span>
                 <span>{item.promptCount}</span>
-                <span><button className="danger-button" type="button" onClick={() => void deleteUser(String(item.id), String(item.email))}>Delete</button></span>
+                <span><button type="button" onClick={() => {
+                  void apiFetch(`/admin/users/${item.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ role: item.role, active: !item.active }) }).then(load).catch((e: Error) => setError(e.message));
+                }}>{item.active ? "Disable" : "Enable"}</button><button className="danger-button" type="button" onClick={() => void deleteUser(String(item.id), String(item.email))}>Delete</button></span>
               </div>
             ))}
           </div>

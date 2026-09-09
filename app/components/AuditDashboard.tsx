@@ -138,6 +138,12 @@ export function AuditDashboard() {
 
   async function load() {
     try {
+      const identity = await apiFetch<{ name: string; email: string; role: string }>("/auth/me");
+      setUser(identity);
+      if (["user", "approver"].includes(identity.role)) {
+        window.location.href = "/security";
+        return;
+      }
       const [audit, usersPayload, policyPayload, integrationPayload, healthPayload] = await Promise.all([
         apiFetch<AuditResponse>("/audit"),
         apiFetch<{ users: Row[] }>("/users").catch(() => ({ users: [] })),
@@ -157,16 +163,13 @@ export function AuditDashboard() {
   }
 
   useEffect(() => {
-    const rawUser = window.localStorage.getItem(USER_KEY);
-    if (rawUser) {
-      setUser(JSON.parse(rawUser) as { name: string; email: string; role: string });
-    }
-    void load();
+    const initialLoad = window.setTimeout(() => { void load(); }, 0);
     const timer = window.setInterval(load, 15000);
-    return () => window.clearInterval(timer);
+    return () => { window.clearTimeout(initialLoad); window.clearInterval(timer); };
   }, []);
 
-  function logout() {
+  async function logout() {
+    await fetch(`${API_BASE_URL}/auth/logout`, { method: "POST", headers: authHeaders() }).catch(() => undefined);
     window.localStorage.removeItem(TOKEN_KEY);
     window.localStorage.removeItem(USER_KEY);
     window.location.href = "/login";
@@ -189,7 +192,7 @@ export function AuditDashboard() {
         }),
       });
       setInspectResult(result);
-      setNotice("Prompt inspected, masked, and logged.");
+      setNotice(`Policy result: ${result.decision}. ${result.send_allowed ? "Content permitted." : "Submission stopped."}`);
       await load();
     } catch (inspectError) {
       setError(inspectError instanceof Error ? inspectError.message : "Prompt inspection failed");
@@ -256,9 +259,9 @@ export function AuditDashboard() {
   const visibleNavItems = user?.role === "admin" ? [...navItems, "Admin Panel" as ViewName] : navItems;
 
   function openView(item: ViewName) {
-    if (item === "Audit Logs") window.location.href = "/audit-logs";
-    else if (item === "System Settings") window.location.href = "/system-settings";
-    else if (item === "Admin Panel") window.location.href = "/admin";
+    if (item === "Audit Logs") window.location.assign("/audit-logs");
+    else if (item === "System Settings") window.location.assign("/system-settings");
+    else if (item === "Admin Panel") window.location.assign("/admin");
     else setActiveView(item);
   }
 
@@ -307,6 +310,7 @@ export function AuditDashboard() {
                 <small>{user?.email ?? "Security Admin"}</small>
               </div>
             </div>
+            <button type="button" onClick={() => { window.location.href = "/security"; }}>Security Controls</button>
             <button type="button" onClick={logout}>Logout</button>
           </div>
         </header>
