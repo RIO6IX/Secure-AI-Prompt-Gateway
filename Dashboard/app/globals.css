@@ -478,7 +478,7 @@ nav button.active {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 0.85rem;
-  align-items: stretch;
+  align-items: start;
 }
 
 .trend-panel,
@@ -628,13 +628,14 @@ nav button.active {
 
 .donut-layout {
   display: grid;
-  grid-template-columns: minmax(8.5rem, auto) minmax(0, 1fr);
-  gap: 1rem;
+  grid-template-columns: max-content minmax(8rem, 14rem);
+  gap: 0.85rem;
   align-items: center;
+  justify-content: start;
 }
 
 .donut {
-  width: clamp(8.5rem, 13vw, 11.2rem);
+  width: clamp(8rem, 11vw, 10rem);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
@@ -663,8 +664,9 @@ nav button.active {
 
 .category-list {
   display: grid;
-  gap: 0.75rem;
+  gap: 0.62rem;
   min-width: 0;
+  max-width: 14rem;
 }
 
 .category-list div {
@@ -756,7 +758,7 @@ nav button.active {
 }
 
 .compact .donut {
-  width: clamp(8rem, 11vw, 9.5rem);
+  width: clamp(7.5rem, 10vw, 9rem);
 }
 
 .rank-list div {
