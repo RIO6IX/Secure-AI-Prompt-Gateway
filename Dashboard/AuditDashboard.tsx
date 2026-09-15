@@ -319,8 +319,8 @@ export function AuditDashboard() {
             <Metrics metrics={metrics} />
             <section className="content-grid">
               <CategoryPanel categories={categories} totalEvents={totalEvents} />
-              <AlertsPanel alerts={alerts} />
               <RiskPanel risks={risks} totalEvents={totalEvents} />
+              <AlertsPanel alerts={alerts} />
               <UsersPanel users={topUsers} maxBlocked={maxBlocked} />
               <SourcesPanel services={services} />
               <DataTypesPanel dataTypes={dataTypes} maxType={maxType} />
