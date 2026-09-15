@@ -14,7 +14,7 @@ from typing import Literal
 from uuid import uuid4
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -118,6 +118,7 @@ class GatewayPromptOut(BaseModel):
     auditEvents: list[dict[str, object]]
     ollamaModel: str
     ollamaAvailable: bool
+    componentExtensionPoints: dict[str, str]
     componentPlaceholders: dict[str, str]
 
 
@@ -320,9 +321,54 @@ def inspect_prompt(payload: PromptInspectionIn) -> AuditEventIn:
 def redact_from_detection(prompt: str, detection: DetectionResponse) -> str:
     sanitized = prompt
     for entity in sorted(detection.detected_entities, key=lambda item: item.start, reverse=True):
-        replacement = f"[{entity.entity_type}_REDACTED]"
+        replacement = "****"
         sanitized = sanitized[: entity.start] + replacement + sanitized[entity.end :]
     return sanitized
+
+
+def audit_event_from_row(row: sqlite3.Row) -> AuditEvent:
+    return AuditEvent(
+        id=row["id"],
+        timestamp=row["timestamp"],
+        actor=row["actor"],
+        department=row["department"],
+        service=row["service"],
+        action=row["action"],
+        status=row["status"],
+        risk=row["risk"],
+        riskScore=row["risk_score"],
+        finding=row["finding"],
+        category=row["category"],
+        policyRule=row["policy_rule"],
+        maskedOutput=row["masked_output"],
+        promptHash=row["prompt_hash"],
+        source=row["source"],
+        remoteId=row["remote_id"],
+    )
+
+
+def audit_filters(
+    risk: str | None,
+    status: str | None,
+    service: str | None,
+    actor: str | None,
+) -> tuple[str, list[object]]:
+    clauses: list[str] = []
+    params: list[object] = []
+    if risk:
+        clauses.append("lower(risk) = lower(?)")
+        params.append(risk)
+    if status:
+        clauses.append("lower(status) = lower(?)")
+        params.append(status)
+    if service:
+        clauses.append("lower(service) LIKE lower(?)")
+        params.append(f"%{service}%")
+    if actor:
+        clauses.append("lower(actor) LIKE lower(?)")
+        params.append(f"%{actor}%")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where, params
 
 
 def title_case_risk(risk: str) -> RiskLevel:
@@ -388,7 +434,7 @@ def build_gateway_audit_events(
         "riskScore": score,
         "finding": finding,
         "category": category,
-        "policyRule": "Component 01 detection active; Component 02/03 placeholder decision",
+        "policyRule": "Component 01 detection enforced; Component 02 and 03 extension points prepared",
         "maskedOutput": sanitized_prompt,
         "originalPrompt": None,
         "promptHash": prompt_hash,
@@ -708,9 +754,13 @@ async def gateway_chat(
         auditEvents=[event.model_dump() for event in audit_events],
         ollamaModel=OLLAMA_MODEL,
         ollamaAvailable=ollama_available,
+        componentExtensionPoints={
+            "component_02": "Prompt Sanitization & Risk Assessment can replace the current deterministic masking stage.",
+            "component_03": "Security Policy & Access Control can replace the current allow/redact/forward decision stage.",
+        },
         componentPlaceholders={
-            "component_02": "Prompt Sanitization & Risk Assessment placeholder currently redacts detected spans only.",
-            "component_03": "Security Policy & Access Control placeholder currently chooses allow/redact based on detection risk.",
+            "component_02": "Prompt Sanitization & Risk Assessment extension point prepared.",
+            "component_03": "Security Policy & Access Control extension point prepared.",
         },
     )
 
@@ -728,59 +778,57 @@ async def create_audit_event(
 
 
 @app.get("/audit/events", response_model=list[AuditEvent])
-def list_audit_events(authorization: str | None = Header(default=None)) -> list[AuditEvent]:
+def list_audit_events(
+    authorization: str | None = Header(default=None),
+    risk: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    service: str | None = Query(default=None),
+    actor: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> list[AuditEvent]:
     init_db()
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin", "auditor"})
+    where, params = audit_filters(risk, status, service, actor)
     with connect() as connection:
         rows = connection.execute(
-            "SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT 200"
+            f"SELECT * FROM audit_events {where} ORDER BY timestamp DESC LIMIT ?",
+            [*params, limit],
         ).fetchall()
 
-    return [
-        AuditEvent(
-            id=row["id"],
-            timestamp=row["timestamp"],
-            actor=row["actor"],
-            department=row["department"],
-            service=row["service"],
-            action=row["action"],
-            status=row["status"],
-            risk=row["risk"],
-            riskScore=row["risk_score"],
-            finding=row["finding"],
-            category=row["category"],
-            policyRule=row["policy_rule"],
-            maskedOutput=row["masked_output"],
-            promptHash=row["prompt_hash"],
-            source=row["source"],
-            remoteId=row["remote_id"],
-        )
-        for row in rows
-    ]
+    return [audit_event_from_row(row) for row in rows]
 
 
 @app.get("/audit")
-def audit_summary(authorization: str | None = Header(default=None)) -> dict[str, object]:
+def audit_summary(
+    authorization: str | None = Header(default=None),
+    risk: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    service: str | None = Query(default=None),
+    actor: str | None = Query(default=None),
+) -> dict[str, object]:
     init_db()
     get_auth_user(authorization)
+    where, params = audit_filters(risk, status, service, actor)
     with connect() as connection:
-        events = connection.execute("SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT 100").fetchall()
-        categories = connection.execute("SELECT category AS name, COUNT(*) AS value FROM audit_events GROUP BY category ORDER BY value DESC").fetchall()
-        risks = connection.execute("SELECT risk AS name, COUNT(*) AS value FROM audit_events GROUP BY risk ORDER BY value DESC").fetchall()
-        services = connection.execute("SELECT service AS name, COUNT(*) AS value FROM audit_events GROUP BY service ORDER BY value DESC").fetchall()
+        events = connection.execute(f"SELECT * FROM audit_events {where} ORDER BY timestamp DESC LIMIT 100", params).fetchall()
+        categories = connection.execute(f"SELECT category AS name, COUNT(*) AS value FROM audit_events {where} GROUP BY category ORDER BY value DESC", params).fetchall()
+        risks = connection.execute(f"SELECT risk AS name, COUNT(*) AS value FROM audit_events {where} GROUP BY risk ORDER BY value DESC", params).fetchall()
+        services = connection.execute(f"SELECT service AS name, COUNT(*) AS value FROM audit_events {where} GROUP BY service ORDER BY value DESC", params).fetchall()
         top_users = connection.execute(
-            """
+            f"""
             SELECT actor AS name, department, SUM(CASE WHEN status = 'Blocked' THEN 1 ELSE 0 END) AS blocked
             FROM audit_events
+            {where}
             GROUP BY actor, department
             ORDER BY blocked DESC, name ASC
             LIMIT 8
-            """
+            """,
+            params,
         ).fetchall()
-        data_types = connection.execute("SELECT finding AS name, COUNT(*) AS value FROM audit_events GROUP BY finding ORDER BY value DESC LIMIT 10").fetchall()
+        data_types = connection.execute(f"SELECT finding AS name, COUNT(*) AS value FROM audit_events {where} GROUP BY finding ORDER BY value DESC LIMIT 10", params).fetchall()
         totals = connection.execute(
-            """
+            f"""
             SELECT
               COUNT(*) AS total,
               SUM(CASE WHEN status = 'Blocked' THEN 1 ELSE 0 END) AS blocked,
@@ -788,7 +836,9 @@ def audit_summary(authorization: str | None = Header(default=None)) -> dict[str,
               COUNT(DISTINCT actor) AS activeUsers,
               AVG(risk_score) AS averageRiskScore
             FROM audit_events
-            """
+            {where}
+            """,
+            params,
         ).fetchone()
 
     def rows(items: list[sqlite3.Row]) -> list[dict[str, object]]:
@@ -834,23 +884,39 @@ def audit_summary(authorization: str | None = Header(default=None)) -> dict[str,
             if row["risk"] in ("High", "Critical") or row["status"] == "Blocked"
         ][:10],
         "dataTypes": rows(data_types),
+        "filters": {"risk": risk, "status": status, "service": service, "actor": actor},
+        "componentHealth": {
+            "component_01": "Sensitive Data Detection Engine active",
+            "component_04": "Audit Logging and Security Dashboard active",
+            "component_02": "Extension point prepared for Prompt Sanitization & Risk Assessment",
+            "component_03": "Extension point prepared for Security Policy & Access Control",
+        },
         "trend": [],
     }
 
 
 @app.get("/reports/export")
-def export_report(authorization: str | None = Header(default=None)) -> Response:
+def export_report(
+    authorization: str | None = Header(default=None),
+    risk: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    service: str | None = Query(default=None),
+    actor: str | None = Query(default=None),
+) -> Response:
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin", "auditor"})
     init_db()
+    where, params = audit_filters(risk, status, service, actor)
     with connect() as connection:
         rows = connection.execute(
-            """
+            f"""
             SELECT id, timestamp, actor, department, service, action, status, risk,
                    risk_score, finding, category, policy_rule, masked_output, source
             FROM audit_events
+            {where}
             ORDER BY timestamp DESC
-            """
+            """,
+            params,
         ).fetchall()
 
     headers = [
