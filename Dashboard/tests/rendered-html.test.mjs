@@ -91,7 +91,9 @@ test("dashboard chart layout uses responsive grids", async () => {
 
   assert.match(css, /\.metrics-grid\s*\{[\s\S]*repeat\(auto-fit, minmax\(min\(100%, 10\.5rem\), 1fr\)\)/);
   assert.match(css, /\.content-grid\s*\{[\s\S]*grid-template-columns: repeat\(12, minmax\(0, 1fr\)\)/);
-  assert.match(css, /\.donut-layout\s*\{[\s\S]*grid-template-columns: minmax\(8\.5rem, auto\) minmax\(0, 1fr\)/);
+  assert.match(css, /\.content-grid\s*\{[\s\S]*align-items: start/);
+  assert.match(css, /\.donut-layout\s*\{[\s\S]*grid-template-columns: max-content minmax\(8rem, 14rem\)/);
+  assert.match(css, /\.donut-layout\s*\{[\s\S]*justify-content: start/);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.donut-layout\s*\{[\s\S]*grid-template-columns: 1fr/);
   assert.match(css, /\.gateway-shell \.risk-panel\s*\{[\s\S]*padding: 1\.35rem 1rem/);
   assert.doesNotMatch(css, /\.gateway-sidebar,\s*\.risk-panel\s*\{/);
