@@ -1,0 +1,35 @@
+services:
+  detection-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: secure-ai-detection-engine
+    environment:
+      MAX_PROMPT_LENGTH: "50000"
+      MAX_BATCH_SIZE: "100"
+      DEFAULT_MIN_CONFIDENCE: "0.35"
+      ENTROPY_THRESHOLD: "3.7"
+      ENABLE_NER: "true"
+      ENABLE_METRICS: "true"
+      LOG_LEVEL: "INFO"
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_MODEL: "qwen2.5:3b"
+      JWT_SECRET: "change-this-local-secret"
+      CORRELATION_SALT: "change-this-local-salt"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v3.4.2
+    profiles: ["monitoring"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - detection-engine

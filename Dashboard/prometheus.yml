@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: secure-ai-detection-engine
+    static_configs:
+      - targets: ["detection-engine:8000"]
