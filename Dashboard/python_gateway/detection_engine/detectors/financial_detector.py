@@ -1,0 +1,1 @@
+from detection_engine.detectors.regex_detector import RegexDetector as FinancialDetector
