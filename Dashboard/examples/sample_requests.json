@@ -1,0 +1,16 @@
+{
+  "detect": {
+    "prompt": "Please debug this code. My AWS key is AKIAIOSFODNN7EXAMPLE and email is user@example.com",
+    "language": "en",
+    "options": {
+      "enable_ner": true,
+      "enable_entropy": true,
+      "enable_source_code_detection": true,
+      "minimum_confidence": 0.35
+    }
+  },
+  "benign": {
+    "prompt": "Explain AES-256 encryption and why authenticated encryption is important.",
+    "language": "en"
+  }
+}

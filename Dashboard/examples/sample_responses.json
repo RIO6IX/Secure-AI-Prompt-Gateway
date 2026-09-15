@@ -1,0 +1,31 @@
+{
+  "request_id": "generated-uuid",
+  "contains_sensitive_data": true,
+  "overall_risk": "HIGH",
+  "risk_score": 0.77,
+  "entity_count": 2,
+  "processing_time_ms": 20.0,
+  "detected_entities": [
+    {
+      "entity_id": "ent-generated",
+      "entity_type": "AWS_ACCESS_KEY",
+      "category": "CREDENTIAL",
+      "start": 42,
+      "end": 62,
+      "masked_value": "AKIA************MPLE",
+      "confidence": 0.77,
+      "risk_level": "HIGH",
+      "validation_status": "FORMAT_VALID",
+      "detection_methods": ["REGEX", "CONTEXT"],
+      "rule_name": "aws_access_key_id",
+      "context": "Known test, documentation, or placeholder context reduced risk."
+    }
+  ],
+  "category_summary": {
+    "CREDENTIAL": 1,
+    "PII": 1,
+    "FINANCIAL": 0,
+    "SOURCE_CODE": 0
+  },
+  "engine_version": "1.0.0"
+}
