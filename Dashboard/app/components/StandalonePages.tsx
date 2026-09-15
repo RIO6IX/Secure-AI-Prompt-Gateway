@@ -96,15 +96,51 @@ function PageChrome({
 
 export function AuditLogsPage() {
   const [events, setEvents] = useState<Row[]>([]);
+  const [risk, setRisk] = useState("");
+  const [status, setStatus] = useState("");
+  const [service, setService] = useState("");
+  const [actor, setActor] = useState("");
+  const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+
+  function auditQuery() {
+    const params = new URLSearchParams();
+    if (risk) params.set("risk", risk);
+    if (status) params.set("status", status);
+    if (service.trim()) params.set("service", service.trim());
+    if (actor.trim()) params.set("actor", actor.trim());
+    return params.toString();
+  }
 
   async function load() {
     try {
-      const payload = await apiFetch<Row[]>("/audit/events");
+      const query = auditQuery();
+      const payload = await apiFetch<Row[]>(`/audit/events${query ? `?${query}` : ""}`);
       setEvents(payload);
+      setNotice("");
       setError("");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load audit logs");
+    }
+  }
+
+  async function exportCsv() {
+    try {
+      const token = getStoredToken();
+      const query = auditQuery();
+      const response = await fetch(`${API_BASE_URL}/reports/export${query ? `?${query}` : ""}`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error("Could not export audit report");
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "secure-ai-filtered-audit-report.csv";
+      link.click();
+      window.URL.revokeObjectURL(url);
+      setNotice("Filtered CSV report downloaded.");
+      setError("");
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : "Could not export audit report");
     }
   }
 
@@ -112,11 +148,39 @@ export function AuditLogsPage() {
 
   return (
     <PageChrome title="Audit Logs" description="Separate audit log webpage. Admin and auditor roles can read this page.">
+      {notice ? <div className="success-state">{notice}</div> : null}
       {error ? <div className="backend-error">{error}</div> : null}
       <article className="panel audit-panel single-view">
         <div className="panel-heading">
           <div><h2>Audit Log Records</h2><p>Read-only masked event history from FastAPI SQLite.</p></div>
-          <button type="button" onClick={() => void load()}>Reload</button>
+          <div className="panel-actions">
+            <button type="button" onClick={() => void load()}>Apply Filters</button>
+            <button type="button" onClick={() => void exportCsv()}>Export CSV</button>
+          </div>
+        </div>
+        <div className="filter-grid">
+          <label>Risk
+            <select value={risk} onChange={(event) => setRisk(event.target.value)}>
+              <option value="">All risks</option>
+              <option value="Low">Low</option>
+              <option value="Medium">Medium</option>
+              <option value="High">High</option>
+              <option value="Critical">Critical</option>
+            </select>
+          </label>
+          <label>Status
+            <select value={status} onChange={(event) => setStatus(event.target.value)}>
+              <option value="">All statuses</option>
+              <option value="Allowed">Allowed</option>
+              <option value="Detected">Detected</option>
+              <option value="Sanitized">Sanitized</option>
+              <option value="Blocked">Blocked</option>
+              <option value="Forwarded">Forwarded</option>
+              <option value="Queued">Queued</option>
+            </select>
+          </label>
+          <label>Service<input value={service} onChange={(event) => setService(event.target.value)} placeholder="ChatGPT, Ollama, Gemini" /></label>
+          <label>User<input value={actor} onChange={(event) => setActor(event.target.value)} placeholder="email or username" /></label>
         </div>
         <div className="audit-table">
           <div className="audit-header"><span>Event ID</span><span>Time</span><span>User</span><span>Action</span><span>Finding</span><span>Masked Output</span><span>Status</span></div>
@@ -127,6 +191,7 @@ export function AuditLogsPage() {
               <span>{event.maskedOutput}</span><span>{event.status}</span>
             </div>
           ))}
+          {!events.length ? <div className="audit-row"><span>No records</span><span /><span /><span /><span /><span>No matching audit events in SQLite.</span><span /></div> : null}
         </div>
       </article>
     </PageChrome>

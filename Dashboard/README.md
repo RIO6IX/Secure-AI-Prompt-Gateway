@@ -4,9 +4,15 @@ Local company-style system for inspecting employee prompts before they are sent 
 
 ## Component 01: Sensitive Data Detection Engine
 
-This repository now includes a detection-only backend component that identifies, classifies, validates, scores, and returns masked previews for sensitive data in prompts. It does **not** redact, sanitize, block, approve, enforce access-control policy, or forward prompts to AI providers. Those actions belong to later gateway components.
+This repository includes a production-style detection backend that identifies, classifies, validates, scores, and returns masked previews for sensitive data in prompts. The engine detects credentials, API keys, passwords, PII, financial identifiers, source-code exposure, and high-entropy secrets using layered regex rules, validators, context checks, and optional NLP support.
 
-The implementation is local-first: no paid APIs, no external cloud detection calls, and no raw prompt persistence inside the detection endpoint.
+The implementation is local-first: no paid APIs, no external cloud detection calls, and no raw prompt persistence inside the detection endpoint. Gateway routes consume the detection result and replace detected sensitive spans with `****` before sending sanitized text to the local Ollama service.
+
+## Component 04: Audit Logging & Security Dashboard
+
+Component 04 is implemented with FastAPI, SQLite, and the dashboard UI. Every gateway inspection writes masked audit events into SQLite, including actor, department, service, action, status, risk, risk score, finding, category, policy rule, source, and prompt hash. Raw prompts are not stored in the audit table.
+
+The dashboard and separate Audit Logs page read directly from the SQLite-backed FastAPI API. They provide live metrics, high-risk alerts, detected data categories, user activity, filtered audit log review, and CSV export. Admin and auditor roles can review audit records, while admin users can also create and delete local users.
 
 ## Problem Statement
 
@@ -138,12 +144,13 @@ The existing FastAPI service still supports:
 - Audit logs
 - Dashboard summaries
 - Prompt Monitor audit ingestion
+- Filtered audit review and CSV export
 
 The new detection API is mounted into that same service.
 
 ## Local Ollama Gateway
 
-The root page is a secure chat gateway. It performs Component 01 detection, creates a redacted preview through a clearly marked Component 02 placeholder, applies a simple Component 03 placeholder decision, forwards only the sanitized prompt to Ollama, and writes Component 04 audit logs.
+The root page is a secure chat gateway. It performs Component 01 detection, masks detected sensitive values with `****`, forwards only the sanitized prompt to Ollama, and writes Component 04 audit logs. Component 02 Prompt Sanitization & Risk Assessment and Component 03 Security Policy & Access Control have explicit extension points so other team members can replace the current deterministic masking and allow/redact decision logic later.
 
 Default model:
 
