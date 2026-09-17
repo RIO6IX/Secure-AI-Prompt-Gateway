@@ -141,16 +141,17 @@ The existing FastAPI service still supports:
 
 - Login/register
 - Role-based admin/auditor/user access
+- Component 03 policy decisions: `ALLOW`, `SANITIZE`, and `BLOCK`
 - Audit logs
 - Dashboard summaries
 - Prompt Monitor audit ingestion
 - Filtered audit review and CSV export
 
-The new detection API is mounted into that same service.
+The new detection API and Security Policy & Access Control Engine are mounted into that same service.
 
 ## Local Ollama Gateway
 
-The root page is a secure chat gateway. It performs Component 01 detection, masks detected sensitive values with `****`, forwards only the sanitized prompt to Ollama, and writes Component 04 audit logs. Component 02 Prompt Sanitization & Risk Assessment and Component 03 Security Policy & Access Control have explicit extension points so other team members can replace the current deterministic masking and allow/redact decision logic later.
+The root page is a secure chat gateway. It performs Component 01 detection, masks detected sensitive values with `****`, applies Component 03 Security Policy & Access Control decisions, forwards only allowed or sanitized prompts to Ollama, and writes Component 04 audit logs. Component 02 Prompt Sanitization & Risk Assessment remains an explicit extension point so the current deterministic masking stage can be replaced by the full risk-scoring component later.
 
 Default model:
 

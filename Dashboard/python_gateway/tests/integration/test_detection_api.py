@@ -52,22 +52,31 @@ def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monk
     assert gateway.status_code == 200
     body = gateway.json()
     assert body["containsSensitiveData"] is True
+    assert body["policyDecision"] == "BLOCK"
+    assert body["policyResult"]["rule_id"] == "POL-CRED-001"
     assert "****" in body["sanitizedPrompt"]
     assert "sk-proj-ABC1234567890secret" not in body["sanitizedPrompt"]
+    assert "sk-proj-ABC1234567890secret" not in body["assistantMessage"]
     assert body["componentExtensionPoints"]["component_02"].startswith("Prompt Sanitization")
+    assert body["componentExtensionPoints"]["component_03"].startswith("Security Policy")
 
-    events = client.get(f"/audit/events?actor={admin_email}&status=Sanitized", headers=headers)
+    events = client.get(f"/audit/events?actor={admin_email}&status=Blocked", headers=headers)
     assert events.status_code == 200
     event_rows = events.json()
     assert len(event_rows) == 1
-    assert event_rows[0]["status"] == "Sanitized"
+    assert event_rows[0]["status"] == "Blocked"
+    assert event_rows[0]["policyRule"].startswith("POL-CRED-001")
     assert "sk-proj-ABC1234567890secret" not in event_rows[0]["maskedOutput"]
 
-    summary = client.get(f"/audit?actor={admin_email}&status=Sanitized", headers=headers)
+    summary = client.get(f"/audit?actor={admin_email}&status=Blocked", headers=headers)
     assert summary.status_code == 200
     assert summary.json()["totals"]["total"] == 1
 
-    export = client.get(f"/reports/export?actor={admin_email}&status=Sanitized", headers=headers)
+    policies = client.get("/policies", headers=headers)
+    assert policies.status_code == 200
+    assert any(policy["id"] == "POL-CRED-001" and policy["action"] == "BLOCK" for policy in policies.json()["policies"])
+
+    export = client.get(f"/reports/export?actor={admin_email}&status=Blocked", headers=headers)
     assert export.status_code == 200
     assert "secure-ai-filtered-audit-report" not in export.text
     assert "sk-proj-ABC1234567890secret" not in export.text

@@ -26,6 +26,7 @@ from detection_engine.engine.masking import mask_value as detection_mask_value
 from detection_engine.models.request import DetectRequest
 from detection_engine.models.response import DetectionResponse
 from detection_engine.services.health_service import health_payload
+from security_policy import PolicyAction, PolicyDecision, PolicyEngine, PolicyInput, UserContext
 
 
 RiskLevel = Literal["Low", "Medium", "High", "Critical"]
@@ -113,6 +114,7 @@ class GatewayPromptOut(BaseModel):
     actionTaken: str
     riskLevel: str
     riskScore: float
+    policyResult: dict[str, object]
     containsSensitiveData: bool
     detectedEntities: list[GatewayEntityOut]
     auditEvents: list[dict[str, object]]
@@ -326,6 +328,10 @@ def redact_from_detection(prompt: str, detection: DetectionResponse) -> str:
     return sanitized
 
 
+def get_policy_engine() -> PolicyEngine:
+    return PolicyEngine()
+
+
 def audit_event_from_row(row: sqlite3.Row) -> AuditEvent:
     return AuditEvent(
         id=row["id"],
@@ -415,6 +421,7 @@ def build_gateway_audit_events(
     user: dict[str, str],
     detection: DetectionResponse,
     sanitized_prompt: str,
+    policy_decision: PolicyDecision,
     ollama_available: bool,
 ) -> list[AuditEventIn]:
     risk = title_case_risk(detection.overall_risk.value)
@@ -434,14 +441,19 @@ def build_gateway_audit_events(
         "riskScore": score,
         "finding": finding,
         "category": category,
-        "policyRule": "Component 01 detection enforced; Component 02 and 03 extension points prepared",
+        "policyRule": f"{policy_decision.rule_id}: {policy_decision.rule_name}",
         "maskedOutput": sanitized_prompt,
         "originalPrompt": None,
         "promptHash": prompt_hash,
         "source": payload.source,
     }
-    if not detection.contains_sensitive_data:
-        return [AuditEventIn(action="Prompt analyzed", status="Allowed", **base)]
+    if policy_decision.action == PolicyAction.ALLOW:
+        return [AuditEventIn(action="Policy allowed prompt", status="Allowed", **base)]
+    if policy_decision.action == PolicyAction.BLOCK:
+        return [
+            AuditEventIn(action="Sensitive data detected", status="Detected", **base),
+            AuditEventIn(action="Policy blocked prompt", status="Blocked", **base),
+        ]
     events = [
         AuditEventIn(action="Sensitive data detected", status="Detected", **base),
         AuditEventIn(action="Prompt sanitized", status="Sanitized", **base),
@@ -542,13 +554,20 @@ def metrics() -> Response:
 @app.get("/policies")
 def policies(authorization: str | None = Header(default=None)) -> dict[str, object]:
     get_auth_user(authorization)
+    policy_engine = get_policy_engine()
     return {
         "policies": [
-            {"name": "Block credentials and tokens", "mode": "Enforce", "owner": "Security", "enabled": True},
-            {"name": "Mask PCI data before AI submission", "mode": "Enforce", "owner": "Compliance", "enabled": True},
-            {"name": "Mask PII before AI submission", "mode": "Enforce", "owner": "Privacy", "enabled": True},
-            {"name": "Warn on source code or internal URLs", "mode": "Monitor", "owner": "Engineering", "enabled": True},
-            {"name": "Default prompt leakage policy", "mode": "Monitor", "owner": "Security", "enabled": True},
+            {
+                "id": rule.rule_id,
+                "name": rule.name,
+                "mode": "Enforce" if rule.action in {PolicyAction.BLOCK, PolicyAction.SANITIZE} else "Monitor",
+                "owner": "Security",
+                "enabled": rule.enabled,
+                "action": rule.action.value,
+                "description": rule.description,
+                "standards": ", ".join(rule.standards),
+            }
+            for rule in policy_engine.active_rules()
         ]
     }
 
@@ -710,24 +729,40 @@ async def gateway_chat(
     engine = get_detection_engine()
     detection = engine.detect(DetectRequest(prompt=payload.prompt))
     sanitized_prompt = redact_from_detection(payload.prompt, detection)
+    policy_engine = get_policy_engine()
+    policy_decision = policy_engine.evaluate(
+        PolicyInput(
+            user=UserContext(**current_user),
+            detection=detection,
+            service=payload.service,
+            department=payload.department,
+            forward_requested=payload.forward_to_ollama,
+        )
+    )
 
-    should_forward = payload.forward_to_ollama
+    should_forward = policy_decision.allowed_to_forward
     assistant_message, ollama_available = await call_ollama(sanitized_prompt) if should_forward else (
-        "Sensitive data was analyzed. Forwarding is disabled for this request.",
+        policy_decision.recommendation,
         False,
     )
-    audit_inputs = build_gateway_audit_events(payload, current_user, detection, sanitized_prompt, ollama_available)
+    audit_inputs = build_gateway_audit_events(payload, current_user, detection, sanitized_prompt, policy_decision, ollama_available)
     audit_events = [write_local(event, None) for event in audit_inputs]
 
-    if detection.contains_sensitive_data and ollama_available:
-        action = "Detected sensitive data -> redacted -> sent to local Ollama safely."
-        decision = "Redacted & Sent Safely"
-    elif detection.contains_sensitive_data:
-        action = "Detected sensitive data -> redacted -> Ollama unavailable."
-        decision = "Redacted; Not Forwarded"
-    else:
+    if policy_decision.action == PolicyAction.BLOCK:
+        action = "Detected sensitive data -> policy blocked -> not forwarded."
+        decision = "BLOCK"
+    elif policy_decision.action == PolicyAction.SANITIZE and ollama_available:
+        action = "Detected sensitive data -> sanitized -> sent to local Ollama safely."
+        decision = "SANITIZE"
+    elif policy_decision.action == PolicyAction.SANITIZE:
+        action = "Detected sensitive data -> sanitized -> not forwarded."
+        decision = "SANITIZE"
+    elif ollama_available:
         action = "No sensitive data detected -> sent to local Ollama."
-        decision = "Allowed"
+        decision = "ALLOW"
+    else:
+        action = "No sensitive data detected -> forwarding disabled or provider unavailable."
+        decision = "ALLOW"
 
     return GatewayPromptOut(
         requestId=detection.request_id,
@@ -738,6 +773,7 @@ async def gateway_chat(
         actionTaken=action,
         riskLevel=detection.overall_risk.value,
         riskScore=detection.risk_score,
+        policyResult=policy_decision.model_dump(mode="json"),
         containsSensitiveData=detection.contains_sensitive_data,
         detectedEntities=[
             GatewayEntityOut(
@@ -756,11 +792,11 @@ async def gateway_chat(
         ollamaAvailable=ollama_available,
         componentExtensionPoints={
             "component_02": "Prompt Sanitization & Risk Assessment can replace the current deterministic masking stage.",
-            "component_03": "Security Policy & Access Control can replace the current allow/redact/forward decision stage.",
+            "component_03": "Security Policy & Access Control Engine is active for RBAC and ALLOW/SANITIZE/BLOCK decisions.",
         },
         componentPlaceholders={
             "component_02": "Prompt Sanitization & Risk Assessment extension point prepared.",
-            "component_03": "Security Policy & Access Control extension point prepared.",
+            "component_03": "Implemented by Component 03 policy engine.",
         },
     )
 
