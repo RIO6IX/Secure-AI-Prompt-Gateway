@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { API_BASE_URL, TOKEN_KEY, USER_KEY } from "../lib/api";
+import { API_BASE_URL, TOKEN_KEY, USER_KEY, apiErrorMessage } from "../lib/api";
 
 type AuthMode = "login" | "register";
 
@@ -33,8 +33,8 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(isRegister ? { name, email, password } : { email, password }),
       });
-      const payload = (await response.json()) as AuthPayload & { detail?: string };
-      if (!response.ok) throw new Error(payload.detail ?? "Authentication failed");
+      const payload = (await response.json()) as AuthPayload & { detail?: unknown };
+      if (!response.ok) throw new Error(apiErrorMessage(payload.detail, "Authentication failed"));
 
       window.localStorage.setItem(TOKEN_KEY, payload.token);
       window.localStorage.setItem(USER_KEY, JSON.stringify(payload.user));

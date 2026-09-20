@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { API_BASE_URL, TOKEN_KEY, USER_KEY, authHeaders, getStoredToken } from "../lib/api";
+import { API_BASE_URL, TOKEN_KEY, USER_KEY, apiErrorMessage, authHeaders, getStoredToken } from "../lib/api";
 
 type User = {
   name: string;
@@ -122,12 +122,12 @@ export function SecureGatewayChat() {
           forward_to_ollama: true,
         }),
       });
-      const payload = (await response.json()) as GatewayResult & { detail?: string };
+      const payload = (await response.json()) as GatewayResult & { detail?: unknown };
       if (response.status === 401) {
         logout();
         return;
       }
-      if (!response.ok) throw new Error(String(payload.detail ?? "Gateway request failed"));
+      if (!response.ok) throw new Error(apiErrorMessage(payload.detail, "Gateway request failed"));
       setResult(payload);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Gateway request failed");

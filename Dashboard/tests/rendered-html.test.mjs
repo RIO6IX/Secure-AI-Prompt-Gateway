@@ -19,6 +19,7 @@ test("gateway chat and dashboard are wired to the real backend", async () => {
   assert.match(gateway, /Detection & Risk Analysis/);
   assert.match(gateway, /Dark Mode/);
   assert.match(gateway, /componentPlaceholders/);
+  assert.match(gateway, /apiErrorMessage\(payload\.detail, "Gateway request failed"\)/);
   assert.match(gateway, /Open Security Dashboard/);
   assert.doesNotMatch(gateway, /Gateway ready|Component 01 detection active|Component 02\/03 extension points prepared/);
   assert.doesNotMatch(gateway, /View All/);
@@ -83,6 +84,8 @@ test("login and register pages use the local Python backend", async () => {
   assert.match(registerPage, /<AuthForm mode="register" \/>/);
   assert.match(authForm, /\/auth\/\$\{mode\}/);
   assert.match(authForm, /localStorage\.setItem\(TOKEN_KEY/);
+  assert.match(authForm, /apiErrorMessage\(payload\.detail, "Authentication failed"\)/);
+  assert.match(api, /function apiErrorMessage/);
   assert.match(api, /http:\/\/localhost:8000/);
 });
 
