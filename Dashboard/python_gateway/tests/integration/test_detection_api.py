@@ -110,3 +110,24 @@ def test_audit_export_trims_filters_and_escapes_spreadsheet_formulas(tmp_path, m
     assert "\"'@policy\"" in export.text
     assert "\"'+masked\"" in export.text
     assert "\"'-browser-extension\"" in export.text
+
+
+def test_gateway_returns_clear_error_for_blank_prompt(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    register = client.post(
+        "/auth/register",
+        json={"name": "Chanuka Admin", "email": "chanuka.blank@example.com", "password": "SecurePass123!"},
+    )
+    assert register.status_code == 201
+    headers = {"authorization": f"Bearer {register.json()['token']}"}
+
+    response = client.post(
+        "/gateway/chat",
+        headers=headers,
+        json={"prompt": "   ", "service": "Ollama Qwen2.5", "forward_to_ollama": False},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "EMPTY_PROMPT"

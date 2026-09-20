@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from detection_engine.api.dependencies import get_detection_engine
 from detection_engine.api.routes import router as detection_router
 from detection_engine.api.routes import root_metrics, root_ready
+from detection_engine.core.exceptions import DetectionError
 from detection_engine.core.logging import configure_logging
 from detection_engine.engine.masking import mask_value as detection_mask_value
 from detection_engine.models.request import DetectRequest
@@ -720,7 +721,10 @@ async def gateway_chat(
     require_role(current_user, {"admin", "user"})
 
     engine = get_detection_engine()
-    detection = engine.detect(DetectRequest(prompt=payload.prompt))
+    try:
+        detection = engine.detect(DetectRequest(prompt=payload.prompt))
+    except DetectionError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
     sanitized_prompt = redact_from_detection(payload.prompt, detection)
 
     should_forward = payload.forward_to_ollama
