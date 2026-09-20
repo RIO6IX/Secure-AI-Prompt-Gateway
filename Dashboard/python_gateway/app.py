@@ -355,6 +355,10 @@ def audit_filters(
 ) -> tuple[str, list[object]]:
     clauses: list[str] = []
     params: list[object] = []
+    risk = risk.strip() if risk else None
+    status = status.strip() if status else None
+    service = service.strip() if service else None
+    actor = actor.strip() if actor else None
     if risk:
         clauses.append("lower(risk) = lower(?)")
         params.append(risk)
@@ -369,6 +373,14 @@ def audit_filters(
         params.append(f"%{actor}%")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     return where, params
+
+
+def csv_cell(value: object) -> str:
+    text = str(value or "")
+    if text.startswith(("=", "+", "-", "@", "\t", "\r")):
+        text = f"'{text}"
+    escaped = text.replace('"', '""')
+    return f'"{escaped}"'
 
 
 def title_case_risk(risk: str) -> RiskLevel:
@@ -939,8 +951,7 @@ def export_report(
     for row in rows:
         values = []
         for header in headers:
-            value = str(row[header] or "").replace('"', '""')
-            values.append(f'"{value}"')
+            values.append(csv_cell(row[header]))
         lines.append(",".join(values))
 
     return Response(

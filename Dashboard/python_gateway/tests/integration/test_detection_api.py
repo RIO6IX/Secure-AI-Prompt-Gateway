@@ -71,3 +71,42 @@ def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monk
     assert export.status_code == 200
     assert "secure-ai-filtered-audit-report" not in export.text
     assert "sk-proj-ABC1234567890secret" not in export.text
+
+
+def test_audit_export_trims_filters_and_escapes_spreadsheet_formulas(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    login_payload = {"name": "Chanuka Admin", "email": "chanuka.report@example.com", "password": "SecurePass123!"}
+    register = client.post("/auth/register", json=login_payload)
+    assert register.status_code == 201
+    headers = {"authorization": f"Bearer {register.json()['token']}"}
+
+    event = {
+        "actor": "=2+2",
+        "department": "Security",
+        "service": "=cmd|' /C calc'!A0",
+        "action": "Policy blocked prompt",
+        "status": "Blocked",
+        "risk": "High",
+        "riskScore": 90,
+        "finding": "Formula-like audit value",
+        "category": "Credential",
+        "policyRule": "@policy",
+        "maskedOutput": "+masked",
+        "source": "-browser-extension",
+    }
+    create_event = client.post("/audit/events", headers=headers, json=event)
+    assert create_event.status_code == 201
+
+    export = client.get(
+        "/reports/export",
+        headers=headers,
+        params={"actor": " =2+2 ", "service": " =cmd ", "status": " Blocked "},
+    )
+    assert export.status_code == 200
+    assert "\"'=2+2\"" in export.text
+    assert "\"'=cmd|' /C calc'!A0\"" in export.text
+    assert "\"'@policy\"" in export.text
+    assert "\"'+masked\"" in export.text
+    assert "\"'-browser-extension\"" in export.text
