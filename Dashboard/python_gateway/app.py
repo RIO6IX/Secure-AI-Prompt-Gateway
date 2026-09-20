@@ -925,7 +925,7 @@ def audit_summary(
             "component_01": "Sensitive Data Detection Engine active",
             "component_04": "Audit Logging and Security Dashboard active",
             "component_02": "Extension point prepared for Prompt Sanitization & Risk Assessment",
-            "component_03": "Extension point prepared for Security Policy & Access Control",
+            "component_03": "Security Policy & Access Control Engine active",
         },
         "trend": [],
     }
