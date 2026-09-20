@@ -80,3 +80,39 @@ def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monk
     assert export.status_code == 200
     assert "secure-ai-filtered-audit-report" not in export.text
     assert "sk-proj-ABC1234567890secret" not in export.text
+
+
+def test_auditor_can_review_logs_but_cannot_process_prompts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    admin_register = client.post(
+        "/auth/register",
+        json={"name": "Sanduni Admin", "email": "sanduni.admin@example.com", "password": "SecurePass123!"},
+    )
+    assert admin_register.status_code == 201
+    admin_headers = {"authorization": f"Bearer {admin_register.json()['token']}"}
+
+    auditor_create = client.post(
+        "/admin/users",
+        headers=admin_headers,
+        json={
+            "name": "Sanduni Auditor",
+            "email": "sanduni.auditor@example.com",
+            "password": "AuditPass123!",
+            "role": "auditor",
+        },
+    )
+    assert auditor_create.status_code == 201
+    auditor_headers = {"authorization": f"Bearer {auditor_create.json()['token']}"}
+
+    audit_logs = client.get("/audit/events", headers=auditor_headers)
+    assert audit_logs.status_code == 200
+
+    blocked_prompt = client.post(
+        "/gateway/chat",
+        headers=auditor_headers,
+        json={"prompt": "Explain this general question", "service": "Ollama Qwen2.5", "forward_to_ollama": False},
+    )
+    assert blocked_prompt.status_code == 403
+    assert blocked_prompt.json()["detail"] == "You do not have permission for this action"
