@@ -47,6 +47,8 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 MAX_PROMPT_CHARS = int(os.getenv("MAX_PROMPT_CHARS", "50000"))
 PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "12"))
 PASSWORD_PBKDF2_ITERATIONS = int(os.getenv("PASSWORD_PBKDF2_ITERATIONS", "310000"))
+LOGIN_MAX_ATTEMPTS = int(os.getenv("LOGIN_MAX_ATTEMPTS", "5"))
+LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_WINDOW_SECONDS", "900"))
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
@@ -255,6 +257,42 @@ def validate_password_strength(password: str) -> None:
     ]
     if sum(checks) < 3:
         raise HTTPException(status_code=400, detail="password must include at least three character types")
+
+
+login_failures: dict[str, list[float]] = {}
+
+
+def login_throttle_key(email: str, request: Request) -> str:
+    host = request.client.host if request.client else "unknown"
+    return f"{host}:{email.strip().lower()}"
+
+
+def prune_login_failures(key: str) -> list[float]:
+    cutoff = time.time() - LOGIN_WINDOW_SECONDS
+    attempts = [attempt for attempt in login_failures.get(key, []) if attempt >= cutoff]
+    if attempts:
+        login_failures[key] = attempts
+    else:
+        login_failures.pop(key, None)
+    return attempts
+
+
+def enforce_login_throttle(email: str, request: Request) -> str:
+    key = login_throttle_key(email, request)
+    attempts = prune_login_failures(key)
+    if len(attempts) >= LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many failed login attempts. Try again later.")
+    return key
+
+
+def record_failed_login(key: str) -> None:
+    attempts = prune_login_failures(key)
+    attempts.append(time.time())
+    login_failures[key] = attempts
+
+
+def clear_failed_logins(key: str) -> None:
+    login_failures.pop(key, None)
 
 
 DETECTORS: list[tuple[str, str, re.Pattern[str], str]] = [
@@ -722,15 +760,19 @@ def delete_user(user_id: str, authorization: str | None = Header(default=None)) 
 
 
 @app.post("/auth/login", response_model=AuthOut)
-def login(payload: LoginIn) -> AuthOut:
+def login(payload: LoginIn, request: Request) -> AuthOut:
     init_db()
+    email = payload.email.strip().lower()
+    throttle_key = enforce_login_throttle(email, request)
     with connect() as connection:
         row = connection.execute(
             "SELECT * FROM users WHERE email = ?",
-            (payload.email.strip().lower(),),
+            (email,),
         ).fetchone()
     if not row or not check_password(payload.password, row["password_hash"]):
+        record_failed_login(throttle_key)
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    clear_failed_logins(throttle_key)
     return auth_response(row)
 
 

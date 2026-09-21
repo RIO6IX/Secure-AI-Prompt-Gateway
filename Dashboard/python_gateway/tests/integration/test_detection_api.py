@@ -48,6 +48,26 @@ def test_security_headers_and_password_strength(tmp_path, monkeypatch) -> None:
     assert response.headers["cache-control"] == "no-store"
 
 
+def test_login_throttles_repeated_failed_attempts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.login_failures.clear()
+    gateway_app.init_db()
+
+    register = client.post(
+        "/auth/register",
+        json={"name": "Rate Limit User", "email": "rate-limit@example.com", "password": "SecurePass123!"},
+    )
+    assert register.status_code == 201
+
+    for _ in range(gateway_app.LOGIN_MAX_ATTEMPTS):
+        failed = client.post("/auth/login", json={"email": "rate-limit@example.com", "password": "WrongPass123!"})
+        assert failed.status_code == 401
+
+    throttled = client.post("/auth/login", json={"email": "rate-limit@example.com", "password": "WrongPass123!"})
+    assert throttled.status_code == 429
+    assert throttled.json()["detail"].startswith("Too many failed login attempts")
+
+
 def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
     gateway_app.init_db()
