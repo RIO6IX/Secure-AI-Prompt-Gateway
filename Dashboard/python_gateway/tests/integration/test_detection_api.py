@@ -68,6 +68,54 @@ def test_login_throttles_repeated_failed_attempts(tmp_path, monkeypatch) -> None
     assert throttled.json()["detail"].startswith("Too many failed login attempts")
 
 
+def test_legacy_password_hashes_still_login_after_hardening(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    legacy_hash = gateway_app.hashlib.pbkdf2_hmac(
+        "sha256",
+        "SecurePass123!".encode("utf-8"),
+        "legacy-salt".encode("utf-8"),
+        120_000,
+    ).hex()
+    with gateway_app.connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO users (id, name, email, password_hash, role, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "USR-LEGACY",
+                "Legacy User",
+                "legacy.chanuka@example.com",
+                f"legacy-salt${legacy_hash}",
+                "admin",
+                "2026-09-22T00:00:00+00:00",
+            ),
+        )
+
+    login = client.post(
+        "/auth/login",
+        json={"email": "legacy.chanuka@example.com", "password": "SecurePass123!"},
+    )
+
+    assert login.status_code == 200
+    assert login.json()["user"]["role"] == "admin"
+
+
+def test_cors_allows_admin_delete_preflight() -> None:
+    response = client.options(
+        "/admin/users/USR-123",
+        headers={
+            "origin": "http://localhost:3000",
+            "access-control-request-method": "DELETE",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "DELETE" in response.headers["access-control-allow-methods"]
+
+
 def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
     gateway_app.init_db()

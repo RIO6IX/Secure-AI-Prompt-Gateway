@@ -65,7 +65,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 app.include_router(detection_router)
@@ -208,12 +208,31 @@ def password_hash(password: str, salt: str | None = None) -> str:
         salt.encode("utf-8"),
         PASSWORD_PBKDF2_ITERATIONS,
     ).hex()
-    return f"{salt}${digest}"
+    return f"pbkdf2_sha256${PASSWORD_PBKDF2_ITERATIONS}${salt}${digest}"
 
 
 def check_password(password: str, stored: str) -> bool:
-    salt, digest = stored.split("$", 1)
-    return hmac.compare_digest(password_hash(password, salt), f"{salt}${digest}")
+    parts = stored.split("$")
+    if len(parts) == 4 and parts[0] == "pbkdf2_sha256":
+        _, iterations, salt, digest = parts
+        candidate = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt.encode("utf-8"),
+            int(iterations),
+        ).hex()
+        return hmac.compare_digest(candidate, digest)
+    if len(parts) == 2:
+        salt, digest = parts
+        legacy_digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000).hex()
+        current_digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt.encode("utf-8"),
+            PASSWORD_PBKDF2_ITERATIONS,
+        ).hex()
+        return hmac.compare_digest(legacy_digest, digest) or hmac.compare_digest(current_digest, digest)
+    return False
 
 
 def get_auth_user(authorization: str | None) -> dict[str, str]:
