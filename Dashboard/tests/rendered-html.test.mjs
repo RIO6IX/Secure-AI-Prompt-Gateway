@@ -38,7 +38,10 @@ test("gateway chat and dashboard are wired to the real backend", async () => {
   assert.match(dashboard, /window\.location\.href = "\/admin"/);
   assert.doesNotMatch(dashboard, /12,842|john\.doe@company\.com|API key detected in prompt/i);
 
-  assert.match(backend, /DB_PATH = BASE_DIR \/ "audit_logs.sqlite3"/);
+  assert.match(backend, /DB_PATH = Path\(os\.getenv\("DB_PATH", str\(BASE_DIR \/ "audit_logs\.sqlite3"\)\)\)/);
+  assert.match(backend, /CORS_ALLOWED_ORIGINS/);
+  assert.match(backend, /validate_runtime_config/);
+  assert.match(backend, /security_headers/);
   assert.match(backend, /CREATE TABLE IF NOT EXISTS audit_events/);
   assert.match(backend, /CREATE TABLE IF NOT EXISTS users/);
   assert.match(backend, /OLLAMA_MODEL = os\.getenv\("OLLAMA_MODEL", "qwen2\.5:3b"\)/);

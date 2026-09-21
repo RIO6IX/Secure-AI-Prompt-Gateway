@@ -32,6 +32,42 @@ def test_empty_prompt_error_shape() -> None:
     assert response.json()["error"]["code"] == "EMPTY_PROMPT"
 
 
+def test_security_headers_and_password_strength(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    response = client.post(
+        "/auth/register",
+        json={"name": "Weak User", "email": "weak.sanduni@example.com", "password": "password"},
+    )
+
+    assert response.status_code == 400
+    assert "password must be at least" in response.json()["detail"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_login_throttles_repeated_failed_attempts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.login_failures.clear()
+    gateway_app.init_db()
+
+    register = client.post(
+        "/auth/register",
+        json={"name": "Rate Limit User", "email": "sanduni.rate-limit@example.com", "password": "SecurePass123!"},
+    )
+    assert register.status_code == 201
+
+    for _ in range(gateway_app.LOGIN_MAX_ATTEMPTS):
+        failed = client.post("/auth/login", json={"email": "sanduni.rate-limit@example.com", "password": "WrongPass123!"})
+        assert failed.status_code == 401
+
+    throttled = client.post("/auth/login", json={"email": "sanduni.rate-limit@example.com", "password": "WrongPass123!"})
+    assert throttled.status_code == 429
+    assert throttled.json()["detail"].startswith("Too many failed login attempts")
+
+
 def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
     gateway_app.init_db()
@@ -80,6 +116,68 @@ def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monk
     assert export.status_code == 200
     assert "secure-ai-filtered-audit-report" not in export.text
     assert "sk-proj-ABC1234567890secret" not in export.text
+
+
+def test_audit_export_trims_filters_and_escapes_spreadsheet_formulas(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    register = client.post(
+        "/auth/register",
+        json={"name": "Sanduni Admin", "email": "sanduni.report@example.com", "password": "SecurePass123!"},
+    )
+    assert register.status_code == 201
+    headers = {"authorization": f"Bearer {register.json()['token']}"}
+
+    event = {
+        "actor": "=2+2",
+        "department": "Security",
+        "service": "=cmd|' /C calc'!A0",
+        "action": "Policy blocked prompt",
+        "status": "Blocked",
+        "risk": "High",
+        "riskScore": 90,
+        "finding": "Formula-like audit value",
+        "category": "Credential",
+        "policyRule": "@policy",
+        "maskedOutput": "+masked",
+        "source": "-browser-extension",
+    }
+    create_event = client.post("/audit/events", headers=headers, json=event)
+    assert create_event.status_code == 201
+
+    export = client.get(
+        "/reports/export",
+        headers=headers,
+        params={"actor": " =2+2 ", "service": " =cmd ", "status": " Blocked "},
+    )
+    assert export.status_code == 200
+    assert "\"'=2+2\"" in export.text
+    assert "\"'=cmd|' /C calc'!A0\"" in export.text
+    assert "\"'@policy\"" in export.text
+    assert "\"'+masked\"" in export.text
+    assert "\"'-browser-extension\"" in export.text
+
+
+def test_gateway_returns_clear_error_for_blank_prompt(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    register = client.post(
+        "/auth/register",
+        json={"name": "Sanduni Admin", "email": "sanduni.blank@example.com", "password": "SecurePass123!"},
+    )
+    assert register.status_code == 201
+    headers = {"authorization": f"Bearer {register.json()['token']}"}
+
+    response = client.post(
+        "/gateway/chat",
+        headers=headers,
+        json={"prompt": "   ", "service": "Ollama Qwen2.5", "forward_to_ollama": False},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "EMPTY_PROMPT"
 
 
 def test_auditor_can_review_logs_but_cannot_process_prompts(tmp_path, monkeypatch) -> None:
