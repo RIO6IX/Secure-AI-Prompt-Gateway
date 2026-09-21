@@ -101,6 +101,8 @@ npm.cmd run build
 
 ```powershell
 cd "C:\Users\user\OneDrive\Desktop\Secure AI Prompt Gateway\Dashboard"
+$env:JWT_SECRET = "replace-with-a-random-secret-at-least-32-characters"
+$env:CORRELATION_SALT = "replace-with-a-random-correlation-salt"
 docker build -t secure-ai-detection-engine .
 docker compose up --build detection-engine
 ```
@@ -115,6 +117,14 @@ docker compose --profile monitoring up --build
 
 Copy `.env.example` for local overrides.
 
+- `ENVIRONMENT=development` or `production`
+- `JWT_SECRET=<random value with at least 32 characters>`
+- `TOKEN_TTL_SECONDS=43200`
+- `CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000`
+- `DB_PATH=python_gateway/audit_logs.sqlite3`
+- `MAX_PROMPT_CHARS=50000`
+- `PASSWORD_MIN_LENGTH=12`
+- `PASSWORD_PBKDF2_ITERATIONS=310000`
 - `MAX_PROMPT_LENGTH=50000`
 - `MAX_BATCH_SIZE=100`
 - `MAX_BATCH_TOTAL_CHARS=250000`
@@ -124,11 +134,29 @@ Copy `.env.example` for local overrides.
 - `ENABLE_METRICS=true`
 - `SPACY_MODEL=en_core_web_sm`
 
+## Production Hardening Checklist
+
+Before using this in a real company environment:
+
+- Set `ENVIRONMENT=production`.
+- Set a unique `JWT_SECRET` with at least 32 random characters. Do not use the local development default.
+- Set `CORRELATION_SALT` to a separate random value.
+- Restrict `CORS_ALLOWED_ORIGINS` to the real frontend origin only.
+- Store `DB_PATH` on a backed-up disk or mounted Docker volume.
+- Run behind HTTPS through a reverse proxy such as Nginx, Caddy, or a company gateway.
+- Keep Ollama bound to localhost or an internal private network.
+- Use organization SSO/MFA for production identity if this becomes an enterprise deployment.
+- Review audit retention, backup, and deletion policy with the organization.
+- Rotate secrets immediately if a real credential is pasted into a prompt.
+
 ## Security and Privacy Design
 
 - Detection-only API never forwards prompts to AI providers.
 - Raw prompts and full matched values are not written to detection logs.
 - Sensitive previews are masked.
+- Auth, audit, report, and gateway responses include no-store cache headers.
+- Browser-facing API responses include defensive security headers.
+- CSV exports neutralize formula-like cells to reduce spreadsheet injection risk.
 - Unicode is normalized with NFKC and null bytes are removed.
 - Regex rules use bounded patterns to reduce ReDoS risk.
 - Luhn validates card structure only; it does not prove a card is real.
