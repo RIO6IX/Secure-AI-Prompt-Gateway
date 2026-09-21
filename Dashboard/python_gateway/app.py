@@ -14,7 +14,7 @@ from typing import Literal
 from uuid import uuid4
 
 import httpx
-from fastapi import FastAPI, Header, HTTPException, Query, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -33,15 +33,25 @@ RiskLevel = Literal["Low", "Medium", "High", "Critical"]
 Role = Literal["admin", "auditor", "user"]
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "audit_logs.sqlite3"
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
+DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "audit_logs.sqlite3")))
 REMOTE_AUDIT_API_URL = os.getenv(
     "REMOTE_AUDIT_API_URL",
     "",
 )
 REMOTE_AUDIT_BEARER_TOKEN = os.getenv("REMOTE_AUDIT_BEARER_TOKEN", "")
 JWT_SECRET = os.getenv("JWT_SECRET", "local-dev-change-this-secret")
+TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", str(60 * 60 * 12)))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+MAX_PROMPT_CHARS = int(os.getenv("MAX_PROMPT_CHARS", "50000"))
+PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "12"))
+PASSWORD_PBKDF2_ITERATIONS = int(os.getenv("PASSWORD_PBKDF2_ITERATIONS", "310000"))
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if origin.strip()
+]
 
 app = FastAPI(
     title="Secure AI Prompt Gateway Python Service",
@@ -51,12 +61,24 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 app.include_router(detection_router)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("x-content-type-options", "nosniff")
+    response.headers.setdefault("x-frame-options", "DENY")
+    response.headers.setdefault("referrer-policy", "no-referrer")
+    response.headers.setdefault("permissions-policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith(("/auth", "/audit", "/reports", "/gateway")):
+        response.headers.setdefault("cache-control", "no-store")
+    return response
 
 
 class RegisterIn(BaseModel):
@@ -83,12 +105,17 @@ class PromptInspectionIn(BaseModel):
     actor: str = Field(..., examples=["john.doe@company.com"])
     department: str = "Unknown"
     service: str = Field(..., examples=["ChatGPT Enterprise"])
-    prompt: str
+    prompt: str = Field(..., max_length=MAX_PROMPT_CHARS)
     source: str = "python-gateway"
 
 
 class GatewayPromptIn(BaseModel):
-    prompt: str = Field(..., min_length=1, examples=["Please fix this API issue. My API key is sk_live_ABC123456789"])
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_PROMPT_CHARS,
+        examples=["Please fix this API issue. My API key is sk_live_ABC123456789"],
+    )
     service: str = "Ollama Qwen2.5"
     department: str = "Engineering"
     source: str = "secure-chat-gateway"
@@ -173,7 +200,12 @@ def verify_token(token: str) -> dict[str, str | int] | None:
 
 def password_hash(password: str, salt: str | None = None) -> str:
     salt = salt or uuid4().hex
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000).hex()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_PBKDF2_ITERATIONS,
+    ).hex()
     return f"{salt}${digest}"
 
 
@@ -203,6 +235,28 @@ def require_role(current_user: dict[str, str], allowed: set[Role]) -> None:
         raise HTTPException(status_code=403, detail="You do not have permission for this action")
 
 
+def validate_runtime_config() -> None:
+    if ENVIRONMENT in {"production", "prod"} and JWT_SECRET == "local-dev-change-this-secret":
+        raise RuntimeError("JWT_SECRET must be changed before running in production")
+    if ENVIRONMENT in {"production", "prod"} and len(JWT_SECRET) < 32:
+        raise RuntimeError("JWT_SECRET must be at least 32 characters in production")
+    if not CORS_ALLOWED_ORIGINS:
+        raise RuntimeError("CORS_ALLOWED_ORIGINS must contain at least one allowed origin")
+
+
+def validate_password_strength(password: str) -> None:
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise HTTPException(status_code=400, detail=f"password must be at least {PASSWORD_MIN_LENGTH} characters")
+    checks = [
+        any(character.islower() for character in password),
+        any(character.isupper() for character in password),
+        any(character.isdigit() for character in password),
+        any(not character.isalnum() for character in password),
+    ]
+    if sum(checks) < 3:
+        raise HTTPException(status_code=400, detail="password must include at least three character types")
+
+
 DETECTORS: list[tuple[str, str, re.Pattern[str], str]] = [
     ("Credentials & Secrets", "OpenAI/API Key", re.compile(r"\b(sk-(?:proj-)?[A-Za-z0-9_-]{16,})\b"), "Block credentials and tokens"),
     ("Credentials & Secrets", "AWS Access Key", re.compile(r"\b(AKIA[0-9A-Z]{16})\b"), "Block credentials and tokens"),
@@ -215,8 +269,12 @@ DETECTORS: list[tuple[str, str, re.Pattern[str], str]] = [
 
 
 def connect() -> sqlite3.Connection:
-    connection = sqlite3.connect(DB_PATH)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(DB_PATH, timeout=10)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA busy_timeout = 10000")
     return connection
 
 
@@ -266,7 +324,7 @@ def auth_response(row: sqlite3.Row) -> AuthOut:
         "name": row["name"],
         "email": row["email"],
         "role": role,
-        "exp": int(time.time()) + 60 * 60 * 12,
+        "exp": int(time.time()) + TOKEN_TTL_SECONDS,
     })
     return AuthOut(token=token, user=user)
 
@@ -524,6 +582,7 @@ def write_local(event: AuditEventIn, remote_id: str | None) -> AuditEvent:
 @app.on_event("startup")
 def on_startup() -> None:
     configure_logging()
+    validate_runtime_config()
     init_db()
 
 
@@ -586,6 +645,7 @@ def register(payload: RegisterIn) -> AuthOut:
     name = payload.name.strip()
     if not email or not name:
         raise HTTPException(status_code=400, detail="name and email are required")
+    validate_password_strength(payload.password)
 
     with connect() as connection:
         count = connection.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
@@ -620,6 +680,7 @@ def create_user(payload: CreateUserIn, authorization: str | None = Header(defaul
     name = payload.name.strip()
     if not email or not name:
         raise HTTPException(status_code=400, detail="name and email are required")
+    validate_password_strength(payload.password)
 
     with connect() as connection:
         try:

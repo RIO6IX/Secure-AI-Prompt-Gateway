@@ -32,6 +32,22 @@ def test_empty_prompt_error_shape() -> None:
     assert response.json()["error"]["code"] == "EMPTY_PROMPT"
 
 
+def test_security_headers_and_password_strength(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    response = client.post(
+        "/auth/register",
+        json={"name": "Weak User", "email": "weak@example.com", "password": "password"},
+    )
+
+    assert response.status_code == 400
+    assert "password must be at least" in response.json()["detail"]
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
     gateway_app.init_db()
