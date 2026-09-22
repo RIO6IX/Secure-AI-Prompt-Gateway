@@ -28,7 +28,7 @@ REGEX_RULES: tuple[RegexRule, ...] = (
     RegexRule("slack_token", "SLACK_TOKEN", Category.CREDENTIAL, re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,255}\b"), 0.90, RiskLevel.CRITICAL, ("slack", "token"), "secret_format"),
     RegexRule("jwt_token", "JWT_TOKEN", Category.CREDENTIAL, re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), 0.88, RiskLevel.HIGH, ("jwt", "bearer", "authorization"), "secret_format"),
     RegexRule("bearer_token", "BEARER_TOKEN", Category.CREDENTIAL, re.compile(r"(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{16,256})\b"), 0.86, RiskLevel.CRITICAL, ("authorization", "bearer"), None),
-    RegexRule("password_assignment", "PASSWORD", Category.CREDENTIAL, re.compile(r"(?i)\b(?:password|passwd|pwd)\s*(?:is|:|=)\s*([^\s,;\"']{6,128})"), 0.86, RiskLevel.CRITICAL, ("password", "pwd"), None),
+    RegexRule("password_assignment", "PASSWORD", Category.CREDENTIAL, re.compile(r"(?i)\b(?:password|passwd|pwd)\s*(?:is|:|=)\s*[\"']?([^\s,;\"']{1,128})[\"']?"), 0.90, RiskLevel.CRITICAL, ("password", "pwd"), None),
     RegexRule("generic_api_key", "GENERIC_API_KEY", Category.CREDENTIAL, re.compile(r"(?i)\b(?:api[_ -]?key|secret|token)\s*[:=]\s*[\"']?([A-Za-z0-9._~+/=-]{16,128})[\"']?"), 0.78, RiskLevel.HIGH, ("api key", "secret", "token"), None),
     RegexRule("database_connection_string", "DATABASE_CONNECTION_STRING", Category.CREDENTIAL, re.compile(r"(?i)\b(?:postgresql|postgres|mysql|mongodb|redis|mssql)://[^\s'\"<>]{8,256}"), 0.88, RiskLevel.CRITICAL, ("database", "connection", "password"), None),
     RegexRule("ssh_private_key_header", "SSH_PRIVATE_KEY", Category.CREDENTIAL, re.compile(r"-----BEGIN OPENSSH PRIVATE KEY-----"), 0.99, RiskLevel.CRITICAL, ("private key",), None),

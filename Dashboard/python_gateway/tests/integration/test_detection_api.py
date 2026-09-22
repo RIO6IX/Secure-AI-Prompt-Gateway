@@ -157,6 +157,32 @@ def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monk
     assert "sk-proj-ABC1234567890secret" not in export.text
 
 
+def test_gateway_masks_short_password_before_forwarding(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    register = client.post(
+        "/auth/register",
+        json={"name": "Password Admin", "email": "password.admin@example.com", "password": "SecurePass123!"},
+    )
+    assert register.status_code == 201
+    headers = {"authorization": f"Bearer {register.json()['token']}"}
+
+    gateway = client.post(
+        "/gateway/chat",
+        headers=headers,
+        json={"prompt": "password = 1234", "service": "Ollama Qwen2.5", "forward_to_ollama": False},
+    )
+
+    assert gateway.status_code == 200
+    body = gateway.json()
+    assert body["containsSensitiveData"] is True
+    assert body["sanitizedPrompt"] == "password = ****"
+    assert "1234" not in body["sanitizedPrompt"]
+    assert "1234" not in body["assistantMessage"]
+    assert any(entity["entityType"] == "PASSWORD" for entity in body["detectedEntities"])
+
+
 def test_audit_export_trims_filters_and_escapes_spreadsheet_formulas(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
     gateway_app.init_db()
