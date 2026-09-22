@@ -195,6 +195,53 @@ def test_gateway_blocks_short_password_before_forwarding(tmp_path, monkeypatch) 
     assert any(entity["entityType"] == "PASSWORD" for entity in body["detectedEntities"])
 
 
+def test_audit_write_boundary_masks_raw_sensitive_output(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+
+    register = client.post(
+        "/auth/register",
+        json={"name": "Audit Admin", "email": "audit.boundary@example.com", "password": "SecurePass123!"},
+    )
+    assert register.status_code == 201
+    headers = {"authorization": f"Bearer {register.json()['token']}"}
+
+    event = {
+        "actor": "audit.boundary@example.com",
+        "department": "Security",
+        "service": "Ollama Qwen2.5",
+        "action": "Prompt analyzed",
+        "status": "Allowed",
+        "risk": "Low",
+        "riskScore": 0,
+        "finding": "No sensitive data detected",
+        "category": "Clean",
+        "policyRule": "Client supplied audit event",
+        "maskedOutput": "password = 1234",
+        "source": "browser-extension",
+    }
+
+    create_event = client.post("/audit/events", headers=headers, json=event)
+    assert create_event.status_code == 201
+    created = create_event.json()
+    assert created["maskedOutput"] == "password = ****"
+    assert created["status"] == "Sanitized"
+    assert created["risk"] == "Critical"
+    assert created["finding"] == "Password"
+    assert "1234" not in created["maskedOutput"]
+
+    events = client.get("/audit/events?actor=audit.boundary@example.com", headers=headers)
+    assert events.status_code == 200
+    rows = events.json()
+    assert rows[0]["maskedOutput"] == "password = ****"
+    assert rows[0]["policyRule"] == "Audit write boundary sanitization enforced"
+
+    export = client.get("/reports/export?actor=audit.boundary@example.com", headers=headers)
+    assert export.status_code == 200
+    assert "password = ****" in export.text
+    assert "1234" not in export.text
+
+
 def test_audit_export_trims_filters_and_escapes_spreadsheet_formulas(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
     gateway_app.init_db()

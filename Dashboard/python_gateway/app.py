@@ -448,6 +448,41 @@ def get_policy_engine() -> PolicyEngine:
     return PolicyEngine()
 
 
+def sanitize_audit_output(value: str) -> tuple[str, DetectionResponse | None]:
+    if not value.strip():
+        return value, None
+    try:
+        detection = get_detection_engine().detect(DetectRequest(prompt=value))
+    except DetectionError:
+        return value, None
+    if not detection.contains_sensitive_data:
+        return value, detection
+    return redact_from_detection(value, detection), detection
+
+
+def harden_audit_event(event: AuditEventIn) -> AuditEventIn:
+    sanitized_output, detection = sanitize_audit_output(event.maskedOutput)
+    if not detection or not detection.contains_sensitive_data:
+        return event
+
+    updates: dict[str, object] = {"maskedOutput": sanitized_output}
+    if sanitized_output != event.maskedOutput:
+        first = detection.detected_entities[0]
+        updates.update(
+            {
+                "risk": title_case_risk(detection.overall_risk.value),
+                "riskScore": int(round(detection.risk_score * 100)),
+                "finding": first.entity_type.replace("_", " ").title(),
+                "category": first.category.value,
+                "policyRule": "Audit write boundary sanitization enforced",
+            }
+        )
+        if event.status.lower() == "allowed":
+            updates["status"] = "Sanitized"
+            updates["action"] = "Sensitive audit output sanitized"
+    return event.model_copy(update=updates)
+
+
 def audit_event_from_row(row: sqlite3.Row) -> AuditEvent:
     return AuditEvent(
         id=row["id"],
@@ -612,6 +647,7 @@ async def write_remote(event: AuditEventIn) -> str | None:
 
 
 def write_local(event: AuditEventIn, remote_id: str | None) -> AuditEvent:
+    event = harden_audit_event(event)
     audit = AuditEvent(
         id=f"AUD-{uuid4().hex[:10].upper()}",
         timestamp=datetime.now(timezone.utc).isoformat(),
