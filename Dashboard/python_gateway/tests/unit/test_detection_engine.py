@@ -20,6 +20,17 @@ def test_credentials_email_and_card_are_detected_without_raw_secret_leakage() ->
     assert all("AKIAIOSFODNN7EXAMPLE" not in entity.masked_value for entity in result.detected_entities)
 
 
+def test_short_password_assignment_is_detected_and_masked() -> None:
+    engine = SensitiveDataDetectionEngine()
+    result = engine.detect(DetectRequest(prompt="password = 1234"))
+    passwords = [entity for entity in result.detected_entities if entity.entity_type == "PASSWORD"]
+
+    assert result.contains_sensitive_data is True
+    assert passwords
+    assert passwords[0].masked_value == "****"
+    assert passwords[0].risk_level == "CRITICAL"
+
+
 def test_cvv_requires_context_and_sri_lankan_nic_uses_context() -> None:
     engine = SensitiveDataDetectionEngine()
     no_cvv = engine.detect(DetectRequest(prompt="The code is 123"))

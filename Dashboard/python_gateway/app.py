@@ -319,7 +319,7 @@ def clear_failed_logins(key: str) -> None:
 DETECTORS: list[tuple[str, str, re.Pattern[str], str]] = [
     ("Credentials & Secrets", "OpenAI/API Key", re.compile(r"\b(sk-(?:proj-)?[A-Za-z0-9_-]{16,})\b"), "Block credentials and tokens"),
     ("Credentials & Secrets", "AWS Access Key", re.compile(r"\b(AKIA[0-9A-Z]{16})\b"), "Block credentials and tokens"),
-    ("Credentials & Secrets", "Password", re.compile(r"(?i)\b(password|pwd)\s*[:=]\s*([^\s,;]{6,})"), "Block credentials and tokens"),
+    ("Credentials & Secrets", "Password", re.compile(r"(?i)\b(?:password|passwd|pwd)\s*(?:is|:|=)\s*[\"']?([^\s,;\"']{1,128})[\"']?"), "Block credentials and tokens"),
     ("Financial (PCI)", "Credit Card Number", re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "Mask PCI data before AI submission"),
     ("PII", "Email Address", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "Mask PII before AI submission"),
     ("PII", "Phone Number", re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b"), "Mask PII before AI submission"),
