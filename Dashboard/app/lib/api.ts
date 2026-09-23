@@ -9,6 +9,18 @@ export function getStoredToken() {
   return window.localStorage.getItem(TOKEN_KEY) ?? "";
 }
 
-export function authHeaders(token = getStoredToken()) {
+export function authHeaders(token = getStoredToken()): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+export function apiErrorMessage(detail: unknown, fallback = "Request failed") {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && typeof detail === "object") {
+    const errorDetail = detail as { code?: unknown; message?: unknown };
+    const code = typeof errorDetail.code === "string" ? errorDetail.code : "";
+    const message = typeof errorDetail.message === "string" ? errorDetail.message : "";
+    const parts = [code, message].filter(Boolean);
+    if (parts.length) return parts.join(": ");
+  }
+  return fallback;
 }

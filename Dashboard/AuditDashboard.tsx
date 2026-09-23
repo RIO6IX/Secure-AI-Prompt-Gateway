@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { API_BASE_URL, TOKEN_KEY, USER_KEY, authHeaders, getStoredToken } from "./app/lib/api";
+import { useStoredUser } from "./app/lib/storage";
 
 type Row = Record<string, string | number | boolean | null>;
 
@@ -11,6 +12,7 @@ type AuditResponse = {
     total?: number;
     blocked?: number;
     highRisk?: number;
+    sensitive?: number;
     activeUsers?: number;
     averageRiskScore?: number;
   };
@@ -98,19 +100,18 @@ export function AuditDashboard() {
   const [users, setUsers] = useState<Row[]>([]);
   const [policies, setPolicies] = useState<Row[]>([]);
   const [integrations, setIntegrations] = useState<Row[]>([]);
-  const [health, setHealth] = useState<Row | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [posting, setPosting] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [service, setService] = useState("ChatGPT Enterprise");
   const [inspectResult, setInspectResult] = useState<Row | null>(null);
-  const [user, setUser] = useState<{ name: string; email: string; role: string } | null>(null);
+  const user = useStoredUser();
 
   async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const token = getStoredToken();
     if (!token) {
-      window.location.href = "/login";
+      window.location.assign("/login");
       throw new Error("Login required");
     }
 
@@ -126,7 +127,7 @@ export function AuditDashboard() {
 
     if (response.status === 401) {
       window.localStorage.removeItem(TOKEN_KEY);
-      window.location.href = "/login";
+      window.location.assign("/login");
       throw new Error("Login expired");
     }
     if (!response.ok) {
@@ -136,40 +137,48 @@ export function AuditDashboard() {
     return payload as T;
   }
 
+  function fetchDashboard() {
+    return Promise.all([
+      apiFetch<AuditResponse>("/audit"),
+      apiFetch<{ users: Row[] }>("/users").catch(() => ({ users: [] })),
+      apiFetch<{ policies: Row[] }>("/policies").catch(() => ({ policies: [] })),
+      apiFetch<{ integrations: Row[] }>("/integrations").catch(() => ({ integrations: [] })),
+    ]);
+  }
+
+  function applyDashboard([audit, usersPayload, policyPayload, integrationPayload]: Awaited<ReturnType<typeof fetchDashboard>>) {
+    setData(audit);
+    setUsers(usersPayload.users);
+    setPolicies(policyPayload.policies);
+    setIntegrations(integrationPayload.integrations);
+    setError("");
+  }
+
+  function showLoadError(loadError: unknown) {
+    setError(loadError instanceof Error ? loadError.message : "Backend request failed");
+  }
+
   async function load() {
     try {
-      const [audit, usersPayload, policyPayload, integrationPayload, healthPayload] = await Promise.all([
-        apiFetch<AuditResponse>("/audit"),
-        apiFetch<{ users: Row[] }>("/users").catch(() => ({ users: [] })),
-        apiFetch<{ policies: Row[] }>("/policies").catch(() => ({ policies: [] })),
-        apiFetch<{ integrations: Row[] }>("/integrations").catch(() => ({ integrations: [] })),
-        fetch(`${API_BASE_URL}/health`).then((response) => response.json() as Promise<Row>),
-      ]);
-      setData(audit);
-      setUsers(usersPayload.users);
-      setPolicies(policyPayload.policies);
-      setIntegrations(integrationPayload.integrations);
-      setHealth(healthPayload);
-      setError("");
+      applyDashboard(await fetchDashboard());
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Backend request failed");
+      showLoadError(loadError);
     }
   }
 
   useEffect(() => {
-    const rawUser = window.localStorage.getItem(USER_KEY);
-    if (rawUser) {
-      setUser(JSON.parse(rawUser) as { name: string; email: string; role: string });
-    }
-    void load();
-    const timer = window.setInterval(load, 15000);
+    const refresh = () => fetchDashboard().then(applyDashboard, showLoadError);
+    refresh();
+    const timer = window.setInterval(refresh, 15000);
     return () => window.clearInterval(timer);
+    // Poll on a fixed interval; the fetch helpers only close over setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function logout() {
     window.localStorage.removeItem(TOKEN_KEY);
     window.localStorage.removeItem(USER_KEY);
-    window.location.href = "/login";
+    window.location.assign("/login");
   }
 
   async function inspectPrompt(event: FormEvent<HTMLFormElement>) {
@@ -181,7 +190,6 @@ export function AuditDashboard() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          actor: user?.email ?? "local.user@company.com",
           department: "Security",
           service,
           prompt,
@@ -233,10 +241,10 @@ export function AuditDashboard() {
       { label: "Prompts Inspected", value: totalEvents, tone: "blue" },
       { label: "Blocked Prompts", value: totals.blocked ?? 0, tone: "red" },
       { label: "High Risk Events", value: totals.highRisk ?? 0, tone: "amber" },
-      { label: "Sensitive Detections", value: totalEvents, tone: "violet" },
+      { label: "Sensitive Detections", value: totals.sensitive ?? 0, tone: "violet" },
       { label: "Active Users", value: totals.activeUsers ?? 0, tone: "green" },
     ],
-    [totalEvents, totals.activeUsers, totals.blocked, totals.highRisk],
+    [totalEvents, totals.activeUsers, totals.blocked, totals.highRisk, totals.sensitive],
   );
 
   const pageDescriptions: Record<ViewName, string> = {
@@ -256,9 +264,9 @@ export function AuditDashboard() {
   const visibleNavItems = user?.role === "admin" ? [...navItems, "Admin Panel" as ViewName] : navItems;
 
   function openView(item: ViewName) {
-    if (item === "Audit Logs") window.location.href = "/audit-logs";
-    else if (item === "System Settings") window.location.href = "/system-settings";
-    else if (item === "Admin Panel") window.location.href = "/admin";
+    if (item === "Audit Logs") window.location.assign("/audit-logs");
+    else if (item === "System Settings") window.location.assign("/system-settings");
+    else if (item === "Admin Panel") window.location.assign("/admin");
     else setActiveView(item);
   }
 
@@ -286,7 +294,7 @@ export function AuditDashboard() {
           <p id="system-status-title">System Status</p>
           <strong>{error ? "Degraded" : "Healthy"}</strong>
           <span>{error || `FastAPI connected at ${API_BASE_URL}`}</span>
-          <button type="button" onClick={() => { window.location.href = "/system-settings"; }}>View System Health</button>
+          <button type="button" onClick={() => { window.location.assign("/system-settings"); }}>View System Health</button>
         </section>
       </aside>
 
@@ -570,22 +578,6 @@ function IntegrationsPanel({ integrations }: { integrations: Row[] }) {
       <article className="panel audit-panel">
         <div className="panel-heading"><div><h2>Integrations</h2><p>Local integration readiness for AI services and browser extension.</p></div></div>
         <div className="policy-grid">{integrations.map((item) => <div key={String(item.name)}><strong>{item.name}</strong><p>{item.mode}</p><span>{item.status}</span></div>)}</div>
-      </article>
-    </section>
-  );
-}
-
-function SettingsPanel({ health }: { health: Row | null }) {
-  return (
-    <section className="single-view">
-      <article className="panel tool-panel">
-        <div className="panel-heading"><div><h2>System Settings</h2><p>Local FastAPI backend status.</p></div></div>
-        <div className="settings-grid">
-          <div><strong>Backend URL</strong><span>{API_BASE_URL}</span></div>
-          <div><strong>Status</strong><span>{String(health?.status ?? "Unknown")}</span></div>
-          <div><strong>Service</strong><span>{String(health?.service ?? "Unknown")}</span></div>
-          <div><strong>Database</strong><span>{String(health?.database ?? "Unknown")}</span></div>
-        </div>
       </article>
     </section>
   );

@@ -8,9 +8,11 @@ from detection_engine.core.config import settings
 from detection_engine.detectors.base import BaseDetector, DetectionContext
 from detection_engine.models.entities import Category, DetectionCandidate, DetectionMethod, RiskLevel
 from detection_engine.rules.allowlists import is_placeholder
+from detection_engine.rules.keyword_match import keywords_in
 
 TOKEN_RE = re.compile(r"\b[A-Za-z0-9+/=_~.-]{16,256}\b")
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+SECRET_CONTEXT = ("secret", "token", "password", "credential", "api key", "auth", "authorization", "bearer", "private key")
 SHA_RE = re.compile(r"^[0-9a-fA-F]{32,128}$")
 
 
@@ -36,8 +38,8 @@ class EntropyDetector(BaseDetector):
             if entropy < settings.entropy_threshold:
                 continue
             start, end = match.span()
-            window = text[max(0, start - 60): min(len(text), end + 60)].lower()
-            secret_context = any(word in window for word in ("secret", "token", "password", "credential", "api_key", "api key", "auth", "bearer", "private_key"))
+            window = text[max(0, start - 60): min(len(text), end + 60)]
+            secret_context = bool(keywords_in(window, SECRET_CONTEXT))
             confidence = min(0.88, 0.46 + ((entropy - settings.entropy_threshold) * 0.10) + (0.20 if secret_context else 0.0))
             findings.append(DetectionCandidate(
                 entity_type="HIGH_ENTROPY_SECRET",

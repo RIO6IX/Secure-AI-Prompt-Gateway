@@ -13,7 +13,7 @@ PLACEHOLDERS = {
     "example.com",
 }
 
-NEGATIVE_CONTEXT = {
+NEGATIVE_CONTEXT = (
     "example",
     "sample",
     "fake",
@@ -21,13 +21,9 @@ NEGATIVE_CONTEXT = {
     "mock",
     "placeholder",
     "test",
-    "test data",
     "documentation",
     "tutorial",
-    "checksum",
-    "uuid",
-    "hash",
-}
+)
 
 
 def is_placeholder(value: str) -> bool:
