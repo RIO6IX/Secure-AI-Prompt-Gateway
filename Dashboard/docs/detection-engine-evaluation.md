@@ -68,6 +68,16 @@ for 2,000 characters and 225 ms for 50,000 characters. NER is capped at
 `NER_MAX_CHARS` (20,000 by default), while the regex, checksum and
 entropy rules always scan the whole prompt.
 
+## Adversarial (ReDoS) inputs
+
+Prompts are attacker-controlled, so every rule was run against
+50,000-character inputs built to trigger backtracking: long digit runs,
+digit groups, dotted numbers, repeated "password is", `a@` runs,
+base64-like runs, and 1,500 unterminated private-key headers. The slowest
+took about 1 s (dotted numbers, where every quad is a valid IP). The rest
+took 25-400 ms. `tests/unit/test_redos_guard.py` fails if any of them
+exceeds 5 s.
+
 ## What the evaluation changed
 
 The first run of this benchmark scored 0.919 precision. Its false
