@@ -48,6 +48,10 @@ class PiiDetector(BaseDetector):
             # short acronyms as organisations; those are noise, not PII.
             if entity.label_ == "ORG" and entity.text.isupper() and (len(entity.text) <= 5 or " " not in entity.text):
                 continue
+            # Names of people, places and organisations are capitalised; an
+            # all-lowercase hit ("token", "api") is a tagging error.
+            if not any(char.isupper() for char in entity.text):
+                continue
             entity_type, confidence = mapping[entity.label_]
             findings.append(DetectionCandidate(
                 entity_type=entity_type,

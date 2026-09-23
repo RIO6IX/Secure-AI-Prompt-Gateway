@@ -87,3 +87,22 @@ def test_password_value_is_captured_not_the_separator(prompt: str, expected: str
 ])
 def test_password_prose_is_not_flagged(prompt: str) -> None:
     assert "PASSWORD" not in detect_types(prompt)
+
+
+@pytest.mark.parametrize("prompt", [
+    "clone https://github.com/RIO6IX/Secure-AI-Prompt-Gateway.git and run it",
+    "docs at https://learn.microsoft.com/en-us/azure/storage/common/storage-account-keys-manage",
+    "download https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js",
+])
+def test_ordinary_urls_are_not_high_entropy_secrets(prompt: str) -> None:
+    assert "HIGH_ENTROPY_SECRET" not in detect_types(prompt)
+
+
+def test_token_inside_url_query_is_still_detected() -> None:
+    prompt = "call https://api.example.org/v1/items?token=Zk3qP9rT2wXy7LmN4bVc8HdS"
+    assert detect_types(prompt) == {"GENERIC_API_KEY": "Zk3qP9rT2wXy7LmN4bVc8HdS"}
+
+
+def test_lowercase_words_are_not_named_entities() -> None:
+    found = detect_types("paste the token here and the api will respond")
+    assert not {"ORGANIZATION", "PERSON_NAME", "LOCATION"} & set(found)

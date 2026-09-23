@@ -14,6 +14,7 @@ TOKEN_RE = re.compile(r"\b[A-Za-z0-9+/=_~.-]{16,256}\b")
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 SECRET_CONTEXT = ("secret", "token", "password", "credential", "api key", "auth", "authorization", "bearer", "private key")
 SHA_RE = re.compile(r"^[0-9a-fA-F]{32,128}$")
+URL_RE = re.compile(r"\b(?:https?|git|ssh|ftp)://[^\s'\"<>]+", re.IGNORECASE)
 
 
 def shannon_entropy(value: str) -> float:
@@ -28,6 +29,7 @@ class EntropyDetector(BaseDetector):
 
     def detect(self, text: str, context: DetectionContext) -> list[DetectionCandidate]:
         findings: list[DetectionCandidate] = []
+        url_spans = [url.span() for url in URL_RE.finditer(text)]
         for match in TOKEN_RE.finditer(text):
             value = match.group(0)
             if not settings.entropy_min_length <= len(value) <= settings.entropy_max_length:
@@ -40,6 +42,12 @@ class EntropyDetector(BaseDetector):
             start, end = match.span()
             window = text[max(0, start - 60): min(len(text), end + 60)]
             secret_context = bool(keywords_in(window, SECRET_CONTEXT))
+            # Repository, documentation and CDN links look random but are not
+            # secrets. Inside a URL only a parameter value ("?token=...") can
+            # be a secret; host and path segments are never reported.
+            in_url = any(url_start <= start and end <= url_end for url_start, url_end in url_spans)
+            if in_url and not (start > 0 and text[start - 1] == "=" and secret_context):
+                continue
             confidence = min(0.88, 0.46 + ((entropy - settings.entropy_threshold) * 0.10) + (0.20 if secret_context else 0.0))
             findings.append(DetectionCandidate(
                 entity_type="HIGH_ENTROPY_SECRET",
