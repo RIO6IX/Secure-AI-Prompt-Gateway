@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from detection_engine.core.config import settings
 from detection_engine.detectors.base import BaseDetector, DetectionContext
 from detection_engine.models.entities import Category, DetectionCandidate, DetectionMethod, RiskLevel
+from detection_engine.rules.tech_terms import TECH_TERMS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ SRI_LANKAN_PLACES = frozenset({
 
 STREET_WORDS = r"(?:Mawatha|Road|Rd|Street|St|Lane|Avenue|Ave|Place|Drive|Veediya|Para|Terrace|Gardens)"
 STREET_WORD_RE = re.compile(rf"\b{STREET_WORDS}\.?$")
+WORD_SPLIT_RE = re.compile(r"[^a-z0-9#+]+")
 STREET_FOLLOWS_RE = re.compile(rf"\s+{STREET_WORDS}\b")
 
 LABEL_MAPPING = {
@@ -131,6 +133,9 @@ class PiiDetector(BaseDetector):
                     STREET_WORD_RE.search(entity.text)
                     or STREET_FOLLOWS_RE.match(doc.text, entity.end_char)
                 ):
+                    continue
+                # "Django", "Kafka vs Redis vs Postgres": product names, not PII.
+                if any(word in TECH_TERMS for word in WORD_SPLIT_RE.split(entity.text.lower()) if word):
                     continue
                 label = entity.label_
                 if label == "PERSON" and entity.text.lower() in SRI_LANKAN_PLACES:

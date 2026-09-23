@@ -121,6 +121,10 @@ CASES: tuple[Case, ...] = (
     Case("token: <your-token-here>"),
     Case("Open the account at the branch in Kandy"),
     Case("We sold 25 units on the road yesterday"),
+    Case("Show me an example .env file for a Django app"),
+    Case("How do I deploy Flask on Kubernetes with Docker?"),
+    Case("Explain Kafka vs Redis vs Postgres queues"),
+    Case("Fix this Pandas and NumPy code in Jupyter"),
     Case("Our company is based in the city centre near the main station."),
 )
 

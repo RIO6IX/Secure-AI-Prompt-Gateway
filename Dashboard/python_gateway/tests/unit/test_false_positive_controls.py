@@ -119,3 +119,18 @@ def test_long_identifiers_without_digits_are_not_secrets(prompt: str) -> None:
 
 def test_random_token_with_digits_is_still_an_entropy_secret() -> None:
     assert "HIGH_ENTROPY_SECRET" in detect_types("use Zk3qP9rT2wXy7LmN4bVc8HdS for the call")
+
+
+@pytest.mark.parametrize("prompt", [
+    "Show me an example .env file for a Django app",
+    "How do I deploy Flask on Kubernetes with Docker?",
+    "Why is my Terraform plan slow on Azure with Jenkins?",
+    "Explain Kafka vs Redis vs Postgres queues",
+    "Fix this Pandas and NumPy code in Jupyter",
+])
+def test_technology_names_are_not_personal_data(prompt: str) -> None:
+    assert not {"PERSON_NAME", "LOCATION", "ORGANIZATION"} & set(detect_types(prompt))
+
+
+def test_real_names_next_to_tech_terms_are_still_found() -> None:
+    assert detect_types("Ask Priya Fernando to review the Django migration").get("PERSON_NAME") == "Priya Fernando"
