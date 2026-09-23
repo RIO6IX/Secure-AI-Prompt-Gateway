@@ -65,3 +65,25 @@ def test_openai_project_key_is_detected_as_critical_credential() -> None:
     assert keys
     assert keys[0].risk_level == "CRITICAL"
     assert "ABC1234567890" not in keys[0].masked_value
+
+
+@pytest.mark.parametrize("prompt, expected", [
+    ("the password is: correct-horse-battery", "correct-horse-battery"),
+    ("password = 1234", "1234"),
+    ("pwd:S3cr3t!", "S3cr3t!"),
+    ('DB_PASSWORD="hunter22"', "hunter22"),
+    ('{"user": "svc", "password": "Tr0ub4dor&3"}', "Tr0ub4dor&3"),
+    ("my passcode is 739104", "739104"),
+])
+def test_password_value_is_captured_not_the_separator(prompt: str, expected: str) -> None:
+    assert detect_types(prompt).get("PASSWORD") == expected
+
+
+@pytest.mark.parametrize("prompt", [
+    "I forgot my password yesterday, how do I reset it?",
+    "my password is too short, what are the rules?",
+    "The password is wrong again.",
+    "your password is not required for SSO",
+])
+def test_password_prose_is_not_flagged(prompt: str) -> None:
+    assert "PASSWORD" not in detect_types(prompt)
