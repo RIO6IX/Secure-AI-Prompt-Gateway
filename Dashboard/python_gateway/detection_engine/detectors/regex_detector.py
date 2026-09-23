@@ -3,6 +3,7 @@ from __future__ import annotations
 from detection_engine.detectors.base import BaseDetector, DetectionContext
 from detection_engine.models.entities import DetectionCandidate, DetectionMethod, ValidationStatus
 from detection_engine.rules.regex_rules import REGEX_RULES
+from detection_engine.validators.date_of_birth import is_plausible_birth_date
 from detection_engine.validators.email import is_email_valid
 from detection_engine.validators.iban import is_iban_valid
 from detection_engine.validators.identifier import is_sri_lankan_nic_format
@@ -13,7 +14,7 @@ from detection_engine.validators.secret_format import is_secret_format_valid
 
 # Entity types whose validator is decisive: a failed check means the match is
 # not that entity at all, so it is dropped instead of down-weighted.
-STRICTLY_VALIDATED = {"IP_ADDRESS", "IPV6_ADDRESS", "CREDIT_CARD_NUMBER", "IBAN", "SRI_LANKAN_NIC"}
+STRICTLY_VALIDATED = {"IP_ADDRESS", "IPV6_ADDRESS", "CREDIT_CARD_NUMBER", "IBAN", "SRI_LANKAN_NIC", "DATE_OF_BIRTH"}
 
 
 class RegexDetector(BaseDetector):
@@ -49,6 +50,8 @@ class RegexDetector(BaseDetector):
     def _validate(validator: str | None, entity_type: str, value: str) -> ValidationStatus:
         if validator == "luhn":
             return ValidationStatus.CHECKSUM_VALID if is_luhn_valid(value) else ValidationStatus.CHECKSUM_INVALID
+        if validator == "date_of_birth":
+            return ValidationStatus.FORMAT_VALID if is_plausible_birth_date(value) else ValidationStatus.FORMAT_INVALID
         if validator == "iban":
             return ValidationStatus.CHECKSUM_VALID if is_iban_valid(value) else ValidationStatus.CHECKSUM_INVALID
         if validator == "email":

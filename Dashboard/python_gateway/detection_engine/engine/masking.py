@@ -11,7 +11,9 @@ def mask_value(entity_type: str, value: str) -> str:
     if "CREDIT_CARD" in compact_type:
         digits = "".join(ch for ch in value if ch.isdigit())
         return f"**** **** **** {digits[-4:]}" if len(digits) >= 4 else "****"
-    if compact_type in {"PHONE_NUMBER", "SRI_LANKAN_NIC", "CVV"}:
+    if compact_type == "DATE_OF_BIRTH":
+        return "****-**-**"
+    if compact_type in {"PHONE_NUMBER", "SRI_LANKAN_NIC", "CVV", "PASSPORT_NUMBER"}:
         return "*" * max(4, len(value) - 1) + value[-1:]
     if "PRIVATE_KEY" in compact_type:
         return "-----BEGIN [REDACTED] PRIVATE KEY-----"

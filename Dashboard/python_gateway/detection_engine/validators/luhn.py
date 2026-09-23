@@ -4,7 +4,7 @@ import re
 
 
 def digits_only(value: str) -> str:
-    return re.sub(r"[\s-]", "", value)
+    return re.sub(r"[\s.-]", "", value)
 
 
 def is_luhn_valid(value: str) -> bool:
