@@ -473,3 +473,16 @@ def test_ordinary_question_with_a_place_name_is_allowed(tmp_path, monkeypatch) -
 
     assert body["decision"] == "ALLOW"
     assert body["sanitizedPrompt"] == "What is the capital of Sri Lanka?"
+
+
+def test_repeated_blocked_attempts_escalate_the_next_sensitive_prompt(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "repeat.probe@example.com")
+    for attempt in ("password = Sup3rS3cret!", "password = Sup3rS3cret!2"):
+        assert client.post("/api/v1/sanitize", headers=headers, json={"prompt": attempt}).json()["decision"] == "BLOCK"
+
+    body = client.post("/api/v1/sanitize", headers=headers, json={"prompt": "mail nimal@company.lk"}).json()
+
+    factors = {factor["entity_type"]: factor["points"] for factor in body["riskAssessment"]["factors"]}
+    assert factors["REPEATED_ATTEMPTS"] == 20
+    clean = client.post("/api/v1/sanitize", headers=headers, json={"prompt": "What is a hash?"}).json()
+    assert clean["decision"] == "ALLOW"

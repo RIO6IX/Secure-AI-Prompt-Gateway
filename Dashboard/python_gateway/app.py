@@ -54,6 +54,7 @@ PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "12"))
 PASSWORD_PBKDF2_ITERATIONS = int(os.getenv("PASSWORD_PBKDF2_ITERATIONS", "310000"))
 LOGIN_MAX_ATTEMPTS = int(os.getenv("LOGIN_MAX_ATTEMPTS", "5"))
 LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_WINDOW_SECONDS", "900"))
+RISK_HISTORY_MINUTES = int(os.getenv("RISK_HISTORY_MINUTES", "60"))
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
@@ -398,6 +399,10 @@ def init_db() -> None:
             )
             """
         )
+        # Supports the per-user recent-blocked lookup done on every prompt.
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_actor_status_time ON audit_events (actor, status, timestamp)"
+        )
 
 
 def auth_response(row: sqlite3.Row) -> AuthOut:
@@ -477,6 +482,17 @@ class PromptVerdict(BaseModel):
         return f"{self.policy.rule_id}: {self.policy.rule_name}"
 
 
+def recent_blocked_count(actor: str) -> int:
+    """Blocked prompts by this user within RISK_HISTORY_MINUTES (from the audit log)."""
+    cutoff = datetime.fromtimestamp(time.time() - RISK_HISTORY_MINUTES * 60, timezone.utc).isoformat()
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS count FROM audit_events WHERE actor = ? AND status = 'Blocked' AND timestamp >= ?",
+            (actor, cutoff),
+        ).fetchone()
+    return int(row["count"])
+
+
 def evaluate_prompt(
     prompt: str,
     user: dict[str, str],
@@ -493,7 +509,7 @@ def evaluate_prompt(
     """
     detection = get_detection_engine().detect(DetectRequest(prompt=prompt))
     sanitized, vault = PROMPT_SANITIZER.sanitize(prompt, detection)
-    assessment = RISK_ASSESSOR.assess(detection)
+    assessment = RISK_ASSESSOR.assess(detection, recent_blocked=recent_blocked_count(user["email"]))
     policy = get_policy_engine().evaluate(
         PolicyInput(
             user=UserContext(**user),

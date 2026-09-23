@@ -67,6 +67,12 @@ CATEGORY_DEFAULT_WEIGHTS: dict[Category, int] = {
 # their NIC) is worse than the sum of parts: it forms a linkable record.
 CATEGORY_COMBINATION_BONUS = 10
 
+# Each prompt this user had blocked recently adds this much, up to the cap.
+# Repeated blocked attempts usually mean someone is trying variations of
+# the same secret until one slips through.
+REPEAT_ATTEMPT_POINTS = 10
+REPEAT_ATTEMPT_CAP = 30
+
 CRITICAL_THRESHOLD = 80
 HIGH_THRESHOLD = 50
 MEDIUM_THRESHOLD = 25
@@ -113,7 +119,13 @@ def level_for(score: int) -> RiskLevel:
 class RiskAssessor:
     """Component 02: turns detection findings into one explainable prompt risk score."""
 
-    def assess(self, detection: DetectionResponse) -> RiskAssessment:
+    def assess(self, detection: DetectionResponse, recent_blocked: int = 0) -> RiskAssessment:
+        """Score a prompt.
+
+        ``recent_blocked`` is how many of this user's prompts were blocked in
+        the recent window. It only raises the score of a prompt that itself
+        contains sensitive data; a clean prompt is never penalised.
+        """
         entities = detection.detected_entities
         if not entities:
             return RiskAssessment(
@@ -154,6 +166,14 @@ class RiskAssessor:
                 category=sorted(categories)[0],
                 points=bonus,
                 reason=f"multiple data categories in one prompt ({names})",
+            ))
+
+        if recent_blocked > 0:
+            factors.append(RiskFactor(
+                entity_type="REPEATED_ATTEMPTS",
+                category=sorted(categories)[0],
+                points=min(REPEAT_ATTEMPT_CAP, REPEAT_ATTEMPT_POINTS * recent_blocked),
+                reason=f"{recent_blocked} blocked prompt(s) from this user in the last hour",
             ))
 
         factors.sort(key=lambda factor: factor.points, reverse=True)

@@ -135,3 +135,20 @@ def test_private_key_alone_is_blocked() -> None:
     prompt = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBGRz\n-----END PGP PRIVATE KEY BLOCK-----"
     assessment = ASSESSOR.assess(run(prompt)[0])
     assert assessment.recommended_action == RecommendedAction.BLOCK
+
+
+def test_recent_blocked_attempts_raise_risk_of_a_sensitive_prompt() -> None:
+    detection = run("Please email nimal@company.lk")[0]
+    first = ASSESSOR.assess(detection)
+    repeated = ASSESSOR.assess(detection, recent_blocked=5)
+
+    assert repeated.score == first.score + 30  # capped at +30
+    assert repeated.factors[0].entity_type == "REPEATED_ATTEMPTS"
+
+
+def test_recent_blocked_attempts_never_affect_a_clean_prompt() -> None:
+    detection = run("What is a hash function?")[0]
+    assessment = ASSESSOR.assess(detection, recent_blocked=10)
+
+    assert assessment.score == 0
+    assert assessment.recommended_action == RecommendedAction.ALLOW
