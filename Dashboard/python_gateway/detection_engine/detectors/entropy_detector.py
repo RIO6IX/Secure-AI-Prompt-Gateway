@@ -48,6 +48,14 @@ class EntropyDetector(BaseDetector):
             in_url = any(url_start <= start and end <= url_end for url_start, url_end in url_spans)
             if in_url and not (start > 0 and text[start - 1] == "=" and secret_context):
                 continue
+            # Generated secrets (base64, hex, random tokens) mix letters and
+            # digits. Long CamelCase identifiers ("DefaultEndpointsProtocol")
+            # score high on entropy but have no digits; without a secret
+            # keyword nearby they are identifiers, not secrets.
+            has_digit = any(char.isdigit() for char in value)
+            has_letter = any(char.isalpha() for char in value)
+            if not secret_context and not (has_digit and has_letter):
+                continue
             confidence = min(0.88, 0.46 + ((entropy - settings.entropy_threshold) * 0.10) + (0.20 if secret_context else 0.0))
             findings.append(DetectionCandidate(
                 entity_type="HIGH_ENTROPY_SECRET",

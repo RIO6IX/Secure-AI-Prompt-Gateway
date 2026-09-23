@@ -104,6 +104,9 @@ class PiiDetector(BaseDetector):
                     continue
                 if entity.label_ == "PERSON" and len(entity) == 1 and self._ambiguous_single_name(entity):
                     continue
+                # Personal names do not contain digits; "Zk3qP9rT..." is a token.
+                if entity.label_ == "PERSON" and any(char.isdigit() for char in entity.text):
+                    continue
                 entity_type, confidence = LABEL_MAPPING[entity.label_]
                 findings.append(DetectionCandidate(
                     entity_type=entity_type,

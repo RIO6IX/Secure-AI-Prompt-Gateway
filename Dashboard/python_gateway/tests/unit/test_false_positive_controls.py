@@ -106,3 +106,16 @@ def test_token_inside_url_query_is_still_detected() -> None:
 def test_lowercase_words_are_not_named_entities() -> None:
     found = detect_types("paste the token here and the api will respond")
     assert not {"ORGANIZATION", "PERSON_NAME", "LOCATION"} & set(found)
+
+
+@pytest.mark.parametrize("prompt", [
+    "DefaultEndpointsProtocol=https;AccountName=acme;EndpointSuffix=core.windows.net",
+    "the class AbstractSingletonProxyFactoryBean handles it",
+    "set spring.jpa.hibernate.ddl-auto to validate",
+])
+def test_long_identifiers_without_digits_are_not_secrets(prompt: str) -> None:
+    assert "HIGH_ENTROPY_SECRET" not in detect_types(prompt)
+
+
+def test_random_token_with_digits_is_still_an_entropy_secret() -> None:
+    assert "HIGH_ENTROPY_SECRET" in detect_types("use Zk3qP9rT2wXy7LmN4bVc8HdS for the call")
