@@ -5,13 +5,13 @@ is, and how to reproduce the numbers.
 
 ## Method
 
-- **Dataset:** `python_gateway/evaluation/dataset.py` has 60 labelled
+- **Dataset:** `python_gateway/evaluation/dataset.py` has 64 labelled
   prompts covering credentials, financial data and personal data. Every
   value is synthetic: vendor keys are built to the documented length from
   a fixed alphabet, and card numbers are issuer test numbers.
-- **Hard negatives:** 22 of the prompts contain nothing sensitive but look
+- **Hard negatives:** 26 of the prompts contain nothing sensitive but look
   sensitive to a naive scanner: UUIDs, commit hashes, order and invoice
-  numbers, version numbers, URLs, release dates, template values such as `${API_KEY}`, "my password is too
+  numbers, version numbers, URLs, release dates, template values such as `${API_KEY}`, technology names (Django, Docker, Kafka), "my password is too
   short", and all-caps words.
 - **Matching:** a prediction is a true positive when its entity type
   matches the label and its span overlaps the labelled value. Any other
@@ -67,7 +67,7 @@ It fails if overall precision or recall drops below 0.95.
 | SWIFT_BIC | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | **Overall** | 41 | 0 | 0 | **1.000** | **1.000** | **1.000** |
 
-60 prompts (22 hard negatives); latency median 1.9 ms, p95 2.9 ms
+64 prompts (26 hard negatives); latency median 2.7 ms, p95 3.7 ms
 
 For larger inputs, the median latency on the same machine is about 23 ms
 for 2,000 characters and 225 ms for 50,000 characters. NER is capped at
