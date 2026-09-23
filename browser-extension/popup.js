@@ -1,282 +1,101 @@
-const backendStatus = document.getElementById("backendStatus");
-const userStatus = document.getElementById("userStatus");
+// All values from the gateway are written with textContent, never innerHTML:
+// user names and reasons are user- or server-controlled strings.
 
-const promptInput = document.getElementById("promptInput");
+const $ = (id) => document.getElementById(id);
 
-const riskLevel = document.getElementById("riskLevel");
+const COLORS = { ALLOW: "#16a34a", SANITIZE: "#f5a524", BLOCK: "#d92d20" };
+const RISK_COLORS = { LOW: "#16a34a", MEDIUM: "#f5a524", HIGH: "#ea580c", CRITICAL: "#d92d20" };
 
-const riskScore = document.getElementById("riskScore");
-
-const statusText = document.getElementById("status");
-
-const actionText = document.getElementById("action");
-
-const categoryText = document.getElementById("category");
-
-const findingText = document.getElementById("finding");
-
-const sanitizedOutput = document.getElementById("sanitizedOutput");
-
-async function checkBackend() {
-
-    try {
-
-        const response = await fetch("http://localhost:8000/health");
-
-        if (response.ok) {
-
-            backendStatus.innerHTML =
-                '<span class="status-dot"></span>Connected';
-
-        } else {
-
-            backendStatus.innerHTML =
-                '<span class="status-dot offline-dot"></span>Backend Error';
-
-        }
-
-    } catch (error) {
-
-        backendStatus.innerHTML =
-            '<span class="status-dot offline-dot"></span>Offline';
-
-    }
-
+function send(type, payload) {
+  return chrome.runtime.sendMessage({ type, payload });
 }
 
-async function login() {
-
-    const email = document.getElementById("email").value.trim();
-
-    const password = document.getElementById("password").value;
-
-    if (!email || !password) {
-
-        alert("Please enter email and password.");
-
-        return;
-
-    }
-
-    try {
-
-        const response = await fetch("http://localhost:8000/auth/login", {
-
-            method: "POST",
-
-            headers: {
-
-                "Content-Type": "application/json"
-
-            },
-
-            body: JSON.stringify({
-
-                email,
-
-                password
-
-            })
-
-        });
-
-        const data = await response.json();
-
-        console.log(data);
-
-        if (!response.ok) {
-
-            alert(data.detail || "Login failed");
-
-            return;
-
-        }
-
-        chrome.storage.local.set({
-
-            jwt: data.token,
-
-            user: data.user
-
-        });
-
-        loginCard.style.display = "none";
-
-        console.log("Logged in user:", data.user);
-
-        userStatus.innerHTML =
-            `<b>${data.user.name}</b><br>${data.user.email}`;
-
-        alert("Login Successful");
-
-    } catch (error) {
-
-        console.error(error);
-
-        alert("Cannot connect to backend.");
-
-    }
-
+async function refreshBackend() {
+  const result = await send("HEALTH");
+  const dot = $("backendStatus").querySelector(".status-dot");
+  if (result.ok) {
+    const ner = result.data.detectionEngine && result.data.detectionEngine.ner_model_available;
+    $("backendText").textContent = ner ? "Connected (NER model loaded)" : "Connected (regex-only mode)";
+    dot.classList.remove("offline-dot");
+  } else {
+    $("backendText").textContent = result.error;
+    dot.classList.add("offline-dot");
+  }
 }
 
-async function inspectPrompt() {
-
-    const prompt = promptInput.value.trim();
-
-    if (!prompt) {
-        alert("Please enter a prompt.");
-        return;
-    }
-
-    chrome.storage.local.get(["jwt", "user"], async (result) => {
-
-        if (!result.jwt) {
-            alert("Please login first.");
-            return;
-        }
-
-        try {
-
-            const response = await fetch("http://localhost:8000/inspect", {
-
-                method: "POST",
-
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": "Bearer " + result.jwt
-                },
-
-                body: JSON.stringify({
-
-                    actor: result.user.email,
-
-                    department: "IT",
-
-                    service: "ChatGPT",
-
-                    prompt: prompt,
-
-                    source: "browser-extension"
-
-                })
-
-            });
-
-            const data = await response.json();
-
-            console.log(data);
-
-            if (!response.ok) {
-
-                alert(data.detail || "Inspection failed");
-
-                return;
-
-            }
-
-            riskLevel.innerText = data.risk.toUpperCase();
-
-            riskScore.innerText = data.riskScore + " / 100";
-
-            statusText.innerText = data.status;
-
-            actionText.innerText = data.action;
-
-            categoryText.innerHTML =
-                `<span class="info-badge">${data.category || "-"}</span>`;
-
-            findingText.innerHTML =
-                `<span class="info-badge">${data.finding || "-"}</span>`;
-
-            const scoreBar = document.getElementById("scoreBar");
-
-            scoreBar.style.width = data.riskScore + "%";
-
-            riskLevel.className = "risk-badge";
-
-            if (data.risk === "High") {
-
-                riskLevel.style.background = "#d92d20";
-                scoreBar.style.background = "#d92d20";
-
-            }
-            else if (data.risk === "Medium") {
-
-                riskLevel.style.background = "#f5a524";
-                scoreBar.style.background = "#f5a524";
-
-            }
-            else {
-
-                riskLevel.style.background = "#16a34a";
-                scoreBar.style.background = "#16a34a";
-
-            }
-
-            sanitizedOutput.value =
-                data.maskedOutput || "";
-
-        } catch (err) {
-
-            console.error(err);
-
-            alert("Cannot connect to backend.");
-
-        }
-
-    });
-
+function showSignedIn(user) {
+  $("loginCard").hidden = Boolean(user);
+  $("userCard").hidden = !user;
+  $("testCard").hidden = !user;
+  if (user) {
+    $("userName").textContent = user.name;
+    $("userEmail").textContent = `${user.email} (${user.role})`;
+  }
 }
 
-const loginCard = document.getElementById("loginCard");
+function showResult(title, scan, sanitizedPrompt) {
+  $("resultCard").hidden = false;
+  $("resultTitle").textContent = title;
+  $("decision").textContent = scan.decision;
+  $("decision").style.background = COLORS[scan.decision] || "#64748b";
+  $("riskLevel").textContent = scan.riskLevel;
+  $("riskScore").textContent = `${scan.riskScore} / 100`;
+  $("scoreBar").style.width = `${scan.riskScore}%`;
+  $("scoreBar").style.background = RISK_COLORS[scan.riskLevel] || "#64748b";
+  $("replaced").textContent = String(scan.replaced);
+  $("reason").textContent = scan.service ? `${scan.reason} (${scan.service})` : scan.reason;
+  $("sanitizedBlock").hidden = !sanitizedPrompt;
+  $("sanitizedOutput").value = sanitizedPrompt || "";
+}
 
-const logoutButton = document.getElementById("logoutButton");
-
-chrome.storage.local.get(["jwt", "user"], (result) => {
-
-    if (result.user) {
-
-        userStatus.innerHTML =
-            `<strong>${result.user.name}</strong><br>${result.user.email}`;
-
-        loginCard.style.display = "none";
-        logoutButton.style.display = "inline-block";
-
-    } else {
-
-        loginCard.style.display = "block";
-        logoutButton.style.display = "none";
-
-        userStatus.innerHTML = "Not Logged In";
-
-    }
-
+$("loginCard").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  $("loginError").hidden = true;
+  const result = await send("LOGIN", { email: $("email").value.trim(), password: $("password").value });
+  $("password").value = "";
+  if (!result.ok) {
+    $("loginError").textContent = result.error;
+    $("loginError").hidden = false;
+    return;
+  }
+  showSignedIn(result.data.user);
 });
 
-document
-.getElementById("loginButton")
-.addEventListener("click", login);
-
-document
-.getElementById("inspectButton")
-.addEventListener("click", inspectPrompt);
-
-checkBackend();
-
-chrome.storage.local.get(["jwt"], (result) => {
-
-    console.log("JWT:");
-
-    console.log(result.jwt);
-
+$("logoutButton").addEventListener("click", async () => {
+  await send("LOGOUT");
+  $("resultCard").hidden = true;
+  showSignedIn(null);
 });
 
-document.getElementById("logoutButton").addEventListener("click", () => {
-
-    chrome.storage.local.remove(["jwt", "user"], () => {
-
-        location.reload();
-
-    });
-
+$("testCard").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const prompt = $("promptInput").value;
+  if (!prompt.trim()) return;
+  $("inspectButton").disabled = true;
+  const result = await send("SCAN_PROMPT", { prompt, service: "Extension popup" });
+  $("inspectButton").disabled = false;
+  if (!result.ok) {
+    $("resultCard").hidden = false;
+    $("resultTitle").textContent = "Check failed";
+    $("reason").textContent = result.error;
+    if (result.status === 401) showSignedIn(null);
+    return;
+  }
+  const data = result.data;
+  showResult("Result", {
+    decision: data.decision,
+    riskLevel: data.riskLevel,
+    riskScore: data.riskScore,
+    replaced: data.replacements.length,
+    reason: data.reason,
+  }, data.sanitizedPrompt);
 });
+
+(async () => {
+  const { user, lastScan } = await chrome.storage.local.get(["user", "lastScan"]);
+  showSignedIn(user || null);
+  if (user && lastScan) {
+    showResult(`Last check: ${new Date(lastScan.at).toLocaleTimeString()}`, lastScan, "");
+  }
+  refreshBackend();
+})();

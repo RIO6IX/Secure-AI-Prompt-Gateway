@@ -392,3 +392,17 @@ hr{
     margin:18px 0;
 
 }
+[hidden] {
+  display: none !important;
+}
+
+.form-error {
+  margin: 8px 0 0;
+  color: #d92d20;
+  font-size: 12px;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}

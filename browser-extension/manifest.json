@@ -1,29 +1,20 @@
 {
   "manifest_version": 3,
   "name": "Secure AI Prompt Gateway",
-  "version": "1.0.0",
-  "description": "Protects sensitive prompts before they are sent to AI services.",
-
-  "permissions": [
-    "storage",
-    "activeTab",
-    "scripting",
-    "tabs"
-  ],
-
+  "version": "1.1.0",
+  "description": "Checks prompts for secrets, card data and personal data before they are sent to AI assistants, using your local gateway.",
+  "permissions": ["storage"],
   "host_permissions": [
-    "http://localhost:8000/*"
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*"
   ],
-
   "background": {
     "service_worker": "background.js"
   },
-
   "action": {
     "default_popup": "popup.html",
     "default_title": "Secure AI Prompt Gateway"
   },
-
   "content_scripts": [
     {
       "matches": [
@@ -33,20 +24,8 @@
         "https://claude.ai/*",
         "https://www.perplexity.ai/*"
       ],
-      "js": [
-        "content.js"
-      ]
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
-  ],
-
-  "web_accessible_resources": [
-  {
-    "resources": [
-      "inject.js"
-    ],
-    "matches": [
-      "<all_urls>"
-    ]
-  }
-]
+  ]
 }
