@@ -1681,6 +1681,65 @@ pre {
   color: #b42318;
 }
 
+.gateway-chat {
+  height: 100vh;
+}
+
+.chat-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  padding-right: 0.25rem;
+}
+
+.chat-turn {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.chat-empty {
+  margin: auto;
+  max-width: 28rem;
+  text-align: center;
+  color: #5b6b84;
+}
+
+.chat-empty strong {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: #0f1d35;
+}
+
+.assistant-reply {
+  white-space: pre-wrap;
+}
+
+.link-button {
+  margin-top: 0.6rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #2563eb;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.system-status small {
+  color: #5b6b84;
+  font-size: 0.75rem;
+}
+
+.system-status strong.offline {
+  color: #b42318;
+}
+
+.gateway-dark .chat-empty strong {
+  color: #e6edf7;
+}
+
 .gateway-shell .risk-panel {
   min-width: 0;
   padding: 1.35rem 1rem;

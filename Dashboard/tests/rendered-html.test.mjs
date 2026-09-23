@@ -19,7 +19,10 @@ test("gateway chat and dashboard are wired to the real backend", async () => {
   assert.match(gateway, /Detection & Risk Analysis/);
   assert.match(gateway, /Dark Mode/);
   assert.match(gateway, /componentPlaceholders/);
-  assert.match(gateway, /apiErrorMessage\(payload\.detail, "Gateway request failed"\)/);
+  assert.match(gateway, /apiErrorMessage\(payload\??\.detail, "Gateway request failed"\)/);
+  assert.match(gateway, /\/health/);
+  assert.doesNotMatch(gateway, /"Yesterday"|"May 16"|<strong>Secure<\/strong>/);
+  assert.doesNotMatch(gateway, /localStorage\.setItem\([^)]*prompt/i);
   assert.match(gateway, /Open Security Dashboard/);
   assert.doesNotMatch(gateway, /Gateway ready|Component 01 detection active|Component 02\/03 extension points prepared/);
   assert.doesNotMatch(gateway, /View All/);
