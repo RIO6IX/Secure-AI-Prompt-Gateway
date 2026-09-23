@@ -30,8 +30,19 @@ from detection_engine.core.logging import configure_logging
 from detection_engine.models.request import DetectRequest
 from detection_engine.models.response import DetectedEntity, DetectionResponse
 from detection_engine.services.health_service import health_payload
+from prompt_sanitizer import (
+    ConversationAccessError,
+    ConversationStore,
+    PromptSanitizer,
+    PseudonymMap,
+    RecommendedAction,
+    ResponseGuard,
+    RiskAssessment,
+    RiskAssessor,
+    SanitizedPrompt,
+    load_risk_policy,
+)
 from prompt_sanitizer.metrics import SanitizerMetrics
-from prompt_sanitizer import ConversationAccessError, load_risk_policy, ConversationStore, PromptSanitizer, PseudonymMap, ResponseGuard, RecommendedAction, RiskAssessment, RiskAssessor, SanitizedPrompt
 from security_policy import PolicyAction, PolicyDecision, PolicyEngine, PolicyInput, UserContext
 
 
@@ -52,6 +63,8 @@ JWT_SECRET = os.getenv("JWT_SECRET", "local-dev-change-this-secret")
 TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", str(60 * 60 * 12)))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+# Generation on a CPU can take minutes for long answers or long conversations.
+OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
 MAX_PROMPT_CHARS = int(os.getenv("MAX_PROMPT_CHARS", "50000"))
 PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "12"))
 PASSWORD_PBKDF2_ITERATIONS = int(os.getenv("PASSWORD_PBKDF2_ITERATIONS", "310000"))
@@ -752,9 +765,12 @@ async def call_ollama(sanitized_prompt: str, history: list[dict[str, str]] | Non
         "Values shown as [TYPE_N] placeholders were removed for privacy; refer to them by the same "
         "placeholder, and the same placeholder means the same value throughout the conversation."
     )
+    messages = [{"role": "system", "content": system}, *(history or []), {"role": "user", "content": sanitized_prompt}]
+    # Connecting should be quick; generating a long answer on a CPU can take
+    # minutes, so only the read timeout is long.
+    timeout = httpx.Timeout(OLLAMA_TIMEOUT_SECONDS, connect=5.0)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            messages = [{"role": "system", "content": system}, *(history or []), {"role": "user", "content": sanitized_prompt}]
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
                 json={
@@ -766,13 +782,25 @@ async def call_ollama(sanitized_prompt: str, history: list[dict[str, str]] | Non
             )
             response.raise_for_status()
             body = response.json()
-            text = str((body.get("message") or {}).get("content") or "").strip()
-            return text or "The sanitized prompt was processed by the local Ollama model.", True
-    except Exception:
+    except httpx.TimeoutException:
+        LOGGER.warning("ollama request timed out after %ss", OLLAMA_TIMEOUT_SECONDS)
         return (
-            "Sensitive data was detected and a sanitized prompt was prepared. Ollama is not reachable, so no model response was generated.",
+            f"The local model did not answer within {OLLAMA_TIMEOUT_SECONDS} seconds. "
+            "Try a shorter request, or raise OLLAMA_TIMEOUT_SECONDS.",
             False,
         )
+    except httpx.ConnectError:
+        return f"The local model is not reachable at {OLLAMA_BASE_URL}. Start Ollama and try again.", False
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return f"The model '{OLLAMA_MODEL}' is not installed. Run: ollama pull {OLLAMA_MODEL}", False
+        LOGGER.warning("ollama returned HTTP %s", exc.response.status_code)
+        return f"The local model returned an error (HTTP {exc.response.status_code}).", False
+    except (httpx.HTTPError, ValueError) as exc:
+        LOGGER.warning("ollama request failed: %s", type(exc).__name__)
+        return "The local model request failed. Please try again.", False
+    text = str((body.get("message") or {}).get("content") or "").strip()
+    return text or "The model returned an empty answer.", True
 
 
 async def write_remote(event: AuditEventIn) -> str | None:
