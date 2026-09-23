@@ -16,13 +16,16 @@
   };
   const service = SERVICES[location.hostname] || location.hostname;
 
-  const EDITOR_SELECTOR = [
+  // Most specific first: generic "textarea" also matches hidden helper
+  // fields some sites keep in the page.
+  const EDITOR_SELECTORS = [
     "#prompt-textarea",
     "rich-textarea [contenteditable='true']",
     "div.ProseMirror[contenteditable='true']",
     "textarea",
     "[contenteditable='true']",
-  ].join(", ");
+  ];
+  const EDITOR_SELECTOR = EDITOR_SELECTORS.join(", ");
   const SEND_SELECTOR = [
     "button[data-testid='send-button']",
     "button[aria-label*='Send' i]",
@@ -34,12 +37,23 @@
   let approvedText = null;
   let scanning = false;
 
+  function isVisible(element) {
+    return element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden";
+  }
+
+  // querySelector with a selector list returns the first match in document
+  // order, so try each selector in priority order and skip hidden fields.
   function findEditor(from) {
     if (from instanceof Element) {
       const own = from.closest(EDITOR_SELECTOR);
       if (own) return own;
     }
-    return document.querySelector(EDITOR_SELECTOR);
+    const scope = (from instanceof Element && from.closest("form")) || document;
+    for (const selector of EDITOR_SELECTORS) {
+      const match = [...scope.querySelectorAll(selector)].find(isVisible);
+      if (match) return match;
+    }
+    return scope === document ? null : findEditor(null);
   }
 
   function readText(editor) {
