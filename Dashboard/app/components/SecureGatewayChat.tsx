@@ -28,6 +28,7 @@ type Replacement = {
 
 type GatewayResult = {
   requestId: string;
+  conversationId: string;
   userPrompt: string;
   sanitizedPrompt: string;
   assistantMessage: string;
@@ -53,6 +54,7 @@ type Turn = {
   sentAt: Date;
   result?: GatewayResult;
   error?: string;
+  notice?: string;
 };
 
 type BackendHealth = {
@@ -119,6 +121,8 @@ export function SecureGatewayChat() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [health, setHealth] = useState<BackendHealth | null>(null);
+  // Server-side conversation: keeps sanitized history and consistent placeholders.
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const threadEnd = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -144,6 +148,15 @@ export function SecureGatewayChat() {
   }
 
   function newChat() {
+    const token = getStoredToken();
+    if (conversationId && token) {
+      // Tell the gateway to forget the history and placeholder map now rather than at expiry.
+      void fetch(`${API_BASE_URL}/gateway/conversations/${encodeURIComponent(conversationId)}`, {
+        method: "DELETE",
+        headers: authHeaders(token),
+      }).catch(() => undefined);
+    }
+    setConversationId(null);
     setTurns([]);
     setSelectedId(null);
     setPrompt("");
@@ -167,26 +180,39 @@ export function SecureGatewayChat() {
 
     let update: Partial<Turn>;
     try {
-      const response = await fetch(`${API_BASE_URL}/gateway/chat`, {
-        method: "POST",
-        headers: {
-          ...authHeaders(token),
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: text,
-          service: "Ollama Qwen2.5",
-          department: "Engineering",
-          forward_to_ollama: true,
-        }),
-      });
+      const post = (conversation: string | null) =>
+        fetch(`${API_BASE_URL}/gateway/chat`, {
+          method: "POST",
+          headers: {
+            ...authHeaders(token),
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            prompt: text,
+            service: "Ollama Qwen2.5",
+            department: "Engineering",
+            forward_to_ollama: true,
+            conversation_id: conversation ?? undefined,
+          }),
+        });
+      let response = await post(conversationId);
+      let restarted = false;
+      if (response.status === 404 && conversationId) {
+        // The conversation expired on the server; continue in a fresh one.
+        response = await post(null);
+        restarted = true;
+      }
       if (response.status === 401) {
         logout();
         return;
       }
       const payload = await readJson(response);
       if (!response.ok || !payload) throw new Error(apiErrorMessage(payload?.detail, "Gateway request failed"));
-      update = { result: payload };
+      setConversationId(payload.conversationId);
+      update = {
+        result: payload,
+        notice: restarted ? "The previous conversation had expired, so this message started a new one." : undefined,
+      };
     } catch (requestError) {
       const message =
         requestError instanceof TypeError
@@ -329,6 +355,7 @@ export function SecureGatewayChat() {
                         <strong>Action Taken</strong>
                         <span>{turn.result.actionTaken}</span>
                       </div>
+                      {turn.notice ? <p className="reply-masked-note">{turn.notice}</p> : null}
                       <p className="assistant-reply">{turn.result.assistantMessage}</p>
                       {turn.result.replyMaskedCount ? (
                         <p className="reply-masked-note">
