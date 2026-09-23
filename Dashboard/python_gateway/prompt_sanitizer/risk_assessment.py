@@ -20,6 +20,17 @@ ENTITY_WEIGHTS: dict[str, int] = {
     "SLACK_TOKEN": 60,
     "SSH_PRIVATE_KEY": 80,
     "PEM_PRIVATE_KEY": 80,
+    "PGP_PRIVATE_KEY": 80,
+    "AWS_SECRET_ACCESS_KEY": 70,
+    "AZURE_STORAGE_KEY": 70,
+    "GCP_SERVICE_ACCOUNT_KEY": 70,
+    "OPENAI_API_KEY": 60,
+    "ANTHROPIC_API_KEY": 60,
+    "HUGGINGFACE_TOKEN": 60,
+    "SENDGRID_API_KEY": 60,
+    "NPM_TOKEN": 60,
+    "SLACK_WEBHOOK": 55,
+    "TELEGRAM_BOT_TOKEN": 55,
     "DATABASE_CONNECTION_STRING": 60,
     "URL_WITH_CREDENTIALS": 55,
     "BEARER_TOKEN": 55,
@@ -32,6 +43,8 @@ ENTITY_WEIGHTS: dict[str, int] = {
     "IBAN": 45,
     "SWIFT_BIC": 10,
     "SRI_LANKAN_NIC": 30,
+    "PASSPORT_NUMBER": 35,
+    "DATE_OF_BIRTH": 15,
     "EMAIL_ADDRESS": 15,
     "PHONE_NUMBER": 10,
     "IP_ADDRESS": 10,
@@ -42,7 +55,14 @@ ENTITY_WEIGHTS: dict[str, int] = {
     "PRIVATE_SOURCE_CODE": 45,
     "SOURCE_CODE": 25,
 }
-DEFAULT_WEIGHT = 15
+# Fallback for entity types without an explicit weight, by category, so a
+# newly added credential rule can never be scored like a phone number.
+CATEGORY_DEFAULT_WEIGHTS: dict[Category, int] = {
+    Category.CREDENTIAL: 55,
+    Category.FINANCIAL: 40,
+    Category.PII: 15,
+    Category.SOURCE_CODE: 25,
+}
 # Several kinds of sensitive data in one prompt (e.g. a customer's card and
 # their NIC) is worse than the sum of parts: it forms a linkable record.
 CATEGORY_COMBINATION_BONUS = 10
@@ -114,7 +134,7 @@ class RiskAssessor:
         factors: list[RiskFactor] = []
         for entity_type, group in by_type.items():
             best = max(group, key=lambda item: item.confidence)
-            weight = ENTITY_WEIGHTS.get(entity_type, DEFAULT_WEIGHT)
+            weight = ENTITY_WEIGHTS.get(entity_type, CATEGORY_DEFAULT_WEIGHTS[best.category])
             points = round(weight * best.confidence)
             repeats = len(group) - 1
             if repeats:

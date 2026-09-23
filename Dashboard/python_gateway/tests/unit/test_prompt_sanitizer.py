@@ -106,3 +106,32 @@ def test_place_names_alone_are_not_redacted() -> None:
 
     assert sanitized.text == "What is the capital of Sri Lanka?"
     assert not sanitized.changed
+
+
+def test_placeholder_already_in_the_prompt_is_not_reused() -> None:
+    prompt = "Format it like [EMAIL_ADDRESS_1] and send to nimal@company.lk"
+    _, sanitized, vault = run(prompt)
+
+    assert sanitized.text == "Format it like [EMAIL_ADDRESS_1] and send to [EMAIL_ADDRESS_2]"
+    restored = SANITIZER.restore("Use [EMAIL_ADDRESS_1]; mail [EMAIL_ADDRESS_2]", sanitized, vault)
+    assert restored == "Use [EMAIL_ADDRESS_1]; mail nimal@company.lk"
+
+
+def test_no_credential_rule_is_weighted_like_contact_details() -> None:
+    from detection_engine.models.entities import Category
+    from detection_engine.rules.regex_rules import REGEX_RULES
+    from prompt_sanitizer.risk_assessment import CATEGORY_DEFAULT_WEIGHTS, ENTITY_WEIGHTS
+
+    for rule in REGEX_RULES:
+        if rule.category != Category.CREDENTIAL:
+            continue
+        weight = ENTITY_WEIGHTS.get(rule.entity_type, CATEGORY_DEFAULT_WEIGHTS[rule.category])
+        # Every credential rule carries at least the generic API key weight (45),
+        # three times an email address, so it can never read as low risk.
+        assert weight >= 45, rule.entity_type
+
+
+def test_private_key_alone_is_blocked() -> None:
+    prompt = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBGRz\n-----END PGP PRIVATE KEY BLOCK-----"
+    assessment = ASSESSOR.assess(run(prompt)[0])
+    assert assessment.recommended_action == RecommendedAction.BLOCK

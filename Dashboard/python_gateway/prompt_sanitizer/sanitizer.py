@@ -81,8 +81,13 @@ class PromptSanitizer:
             key = (entity.entity_type, original)
             placeholder = by_value.get(key)
             if placeholder is None:
-                counters[entity.entity_type] = counters.get(entity.entity_type, 0) + 1
-                placeholder = f"[{entity.entity_type}_{counters[entity.entity_type]}]"
+                # Never reuse a placeholder the user already typed; otherwise
+                # restore() would put a real value where their own text was.
+                while True:
+                    counters[entity.entity_type] = counters.get(entity.entity_type, 0) + 1
+                    placeholder = f"[{entity.entity_type}_{counters[entity.entity_type]}]"
+                    if placeholder not in prompt:
+                        break
                 by_value[key] = placeholder
                 vault[placeholder] = original
 
