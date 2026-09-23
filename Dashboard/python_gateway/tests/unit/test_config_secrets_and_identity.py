@@ -90,3 +90,24 @@ def test_honorific_names_including_lowercase_are_found() -> None:
 def test_sri_lankan_towns_are_not_people() -> None:
     spans = found("Open the account at the branch in Kandy")
     assert "PERSON_NAME" not in spans
+
+
+@pytest.mark.parametrize("prompt, name", [
+    ("Invoice for Kamal Perera", "Kamal Perera"),
+    ("Dear Nimali de Silva, thanks", "Nimali de Silva"),
+    ("Approved by K. Perera", "K. Perera"),
+    ("Signed A.B. Jayawardena", "A.B. Jayawardena"),
+    ("Assign to Priya Sivakumar", "Priya Sivakumar"),
+    ("Refund Fathima Rizwan", "Fathima Rizwan"),
+])
+def test_sri_lankan_names_are_detected(prompt: str, name: str) -> None:
+    names = [prompt[e.start:e.end] for e in ENGINE.detect(DetectRequest(prompt=prompt)).detected_entities if e.entity_type == "PERSON_NAME"]
+    assert name in names
+
+
+@pytest.mark.parametrize("prompt", [
+    "Perera & Sons won the tender",
+    "The shop is on Fernando Mawatha",
+])
+def test_surname_alone_or_after_command_word_is_not_a_person(prompt: str) -> None:
+    assert "PERSON_NAME" not in found(prompt)
