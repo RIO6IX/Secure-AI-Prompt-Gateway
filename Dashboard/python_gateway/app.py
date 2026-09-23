@@ -28,6 +28,7 @@ from detection_engine.core.logging import configure_logging
 from detection_engine.models.request import DetectRequest
 from detection_engine.models.response import DetectedEntity, DetectionResponse
 from detection_engine.services.health_service import health_payload
+from prompt_sanitizer import PromptSanitizer, RecommendedAction, RiskAssessment, RiskAssessor, SanitizedPrompt
 from security_policy import PolicyAction, PolicyDecision, PolicyEngine, PolicyInput, UserContext
 
 
@@ -155,6 +156,8 @@ class GatewayPromptOut(BaseModel):
     actionTaken: str
     riskLevel: str
     riskScore: float
+    riskAssessment: dict[str, object]
+    replacements: list[dict[str, object]]
     policyResult: dict[str, object]
     containsSensitiveData: bool
     detectedEntities: list[GatewayEntityOut]
@@ -163,6 +166,27 @@ class GatewayPromptOut(BaseModel):
     ollamaAvailable: bool
     componentExtensionPoints: dict[str, str]
     componentPlaceholders: dict[str, str]
+
+
+class SanitizeIn(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_CHARS)
+    service: str = Field(default="Browser AI assistant", max_length=120)
+    department: str = Field(default="Unknown", max_length=120)
+    source: str = Field(default="browser-extension", max_length=60)
+
+
+class SanitizeOut(BaseModel):
+    requestId: str
+    decision: str
+    reason: str
+    sanitizedPrompt: str
+    containsSensitiveData: bool
+    riskLevel: str
+    riskScore: int
+    riskAssessment: dict[str, object]
+    replacements: list[dict[str, object]]
+    policyResult: dict[str, object]
+    auditId: str
 
 
 class AuditEventIn(BaseModel):
@@ -409,52 +433,124 @@ def entity_label(entity_type: str) -> str:
     return entity_type.replace("_", " ").title()
 
 
-def inspect_prompt(payload: PromptInspectionIn, actor: str) -> AuditEventIn:
-    detection = get_detection_engine().detect(DetectRequest(prompt=payload.prompt))
-    masked = redact_from_detection(payload.prompt, detection)
-    prompt_hash = hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest()
-
-    if not detection.contains_sensitive_data:
-        return AuditEventIn(
-            actor=actor,
-            department=payload.department,
-            service=payload.service,
-            action="Prompt allowed",
-            status="Allowed",
-            risk="Low",
-            riskScore=0,
-            finding="No sensitive data detected",
-            category="Clean",
-            policyRule="Default prompt leakage policy",
-            maskedOutput=masked,
-            promptHash=prompt_hash,
-            source=payload.source,
-        )
-
-    primary = primary_entity(detection)
-    credential_hit = any(
-        entity.category.value == "CREDENTIAL" and entity.risk_level.value in {"HIGH", "CRITICAL"}
-        for entity in detection.detected_entities
-    )
-    return AuditEventIn(
-        actor=actor,
-        department=payload.department,
-        service=payload.service,
-        action="Prompt blocked" if credential_hit else "Prompt sanitized",
-        status="Blocked" if credential_hit else "Sanitized",
-        risk=title_case_risk(detection.overall_risk.value),
-        riskScore=int(round(detection.risk_score * 100)),
-        finding=entity_label(primary.entity_type),
-        category=primary.category.value,
-        policyRule=POLICY_BY_CATEGORY.get(primary.category.value, "Default prompt leakage policy"),
-        maskedOutput=masked,
-        promptHash=prompt_hash,
-        source=payload.source,
+def inspect_prompt(payload: PromptInspectionIn, user: dict[str, str]) -> AuditEventIn:
+    verdict, _ = evaluate_prompt(payload.prompt, user, payload.service, payload.department, forward_requested=False)
+    action = {"BLOCK": "Prompt blocked", "SANITIZE": "Prompt sanitized"}.get(verdict.action, "Prompt allowed")
+    return verdict_audit_event(
+        verdict, user["email"], payload.department, payload.service, payload.source, payload.prompt, action,
     )
 
 
 def get_policy_engine() -> PolicyEngine:
     return PolicyEngine()
+
+
+PROMPT_SANITIZER = PromptSanitizer()
+RISK_ASSESSOR = RiskAssessor()
+ACTION_STRICTNESS = {"ALLOW": 0, "SANITIZE": 1, "BLOCK": 2}
+
+
+class PromptVerdict(BaseModel):
+    """Combined outcome of Components 01-03 for one prompt."""
+
+    detection: DetectionResponse
+    sanitized: SanitizedPrompt
+    assessment: RiskAssessment
+    policy: PolicyDecision
+    action: str
+    reason: str
+
+    @property
+    def blocked(self) -> bool:
+        return self.action == "BLOCK"
+
+    @property
+    def audit_status(self) -> str:
+        if self.blocked:
+            return "Blocked"
+        return "Sanitized" if self.sanitized.changed or self.detection.contains_sensitive_data else "Allowed"
+
+    @property
+    def policy_rule(self) -> str:
+        if self.blocked and self.policy.action != PolicyAction.BLOCK:
+            return f"RISK-{self.assessment.level.value}: Component 02 risk score {self.assessment.score}/100"
+        return f"{self.policy.rule_id}: {self.policy.rule_name}"
+
+
+def evaluate_prompt(
+    prompt: str,
+    user: dict[str, str],
+    service: str,
+    department: str,
+    forward_requested: bool,
+) -> tuple[PromptVerdict, dict[str, str]]:
+    """Run detection -> sanitization -> risk assessment -> policy.
+
+    The stricter of the risk recommendation (Component 02) and the policy
+    decision (Component 03) wins, so a prompt that is only "sanitize" under
+    every individual rule is still blocked when the combined risk is critical.
+    Returns the verdict and the in-memory placeholder vault.
+    """
+    detection = get_detection_engine().detect(DetectRequest(prompt=prompt))
+    sanitized, vault = PROMPT_SANITIZER.sanitize(prompt, detection)
+    assessment = RISK_ASSESSOR.assess(detection)
+    policy = get_policy_engine().evaluate(
+        PolicyInput(
+            user=UserContext(**user),
+            detection=detection,
+            service=service,
+            department=department,
+            forward_requested=forward_requested,
+        )
+    )
+    risk_action = assessment.recommended_action.value
+    if ACTION_STRICTNESS[risk_action] > ACTION_STRICTNESS[policy.action.value]:
+        action = risk_action
+        reason = assessment.summary
+    else:
+        action = policy.action.value
+        reason = policy.reason
+    if action == RecommendedAction.SANITIZE.value and not detection.contains_sensitive_data:
+        action = RecommendedAction.ALLOW.value
+    verdict = PromptVerdict(
+        detection=detection,
+        sanitized=sanitized,
+        assessment=assessment,
+        policy=policy,
+        action=action,
+        reason=reason,
+    )
+    return verdict, vault
+
+
+def verdict_audit_event(
+    verdict: PromptVerdict,
+    actor: str,
+    department: str,
+    service: str,
+    source: str,
+    prompt: str,
+    action: str,
+) -> AuditEventIn:
+    finding, category = "No sensitive data detected", "Clean"
+    if verdict.detection.detected_entities:
+        primary = primary_entity(verdict.detection)
+        finding, category = entity_label(primary.entity_type), primary.category.value
+    return AuditEventIn(
+        actor=actor,
+        department=department,
+        service=service,
+        action=action,
+        status=verdict.audit_status,
+        risk=title_case_risk(verdict.assessment.level.value),
+        riskScore=verdict.assessment.score,
+        finding=finding,
+        category=category,
+        policyRule=verdict.policy_rule,
+        maskedOutput=verdict.sanitized.text,
+        promptHash=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        source=source,
+    )
 
 
 def redact_from_detection(prompt: str, detection: DetectionResponse) -> str:
@@ -594,48 +690,6 @@ async def call_ollama(sanitized_prompt: str) -> tuple[str, bool]:
             "Sensitive data was detected and a sanitized prompt was prepared. Ollama is not reachable, so no model response was generated.",
             False,
         )
-
-
-def build_gateway_audit_event(
-    payload: GatewayPromptIn,
-    user: dict[str, str],
-    detection: DetectionResponse,
-    sanitized_prompt: str,
-    policy_decision: PolicyDecision,
-    model_available: bool,
-) -> AuditEventIn:
-    finding = "No sensitive data detected"
-    category = "Clean"
-    if detection.detected_entities:
-        primary = primary_entity(detection)
-        finding = entity_label(primary.entity_type)
-        category = primary.category.value
-
-    if policy_decision.action == PolicyAction.BLOCK:
-        action = "Policy blocked prompt"
-    elif not policy_decision.allowed_to_forward:
-        action = "Policy allowed prompt; forwarding disabled"
-    elif model_available:
-        action = "Policy allowed prompt; sent to local Ollama"
-    else:
-        action = "Policy allowed prompt; Ollama unavailable"
-    status = policy_decision.audit_status
-
-    return AuditEventIn(
-        actor=user["email"],
-        department=payload.department,
-        service=payload.service,
-        action=action,
-        status=status,
-        risk=title_case_risk(detection.overall_risk.value),
-        riskScore=int(round(detection.risk_score * 100)),
-        finding=finding,
-        category=category,
-        policyRule=f"{policy_decision.rule_id}: {policy_decision.rule_name}",
-        maskedOutput=sanitized_prompt,
-        promptHash=hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest(),
-        source=payload.source,
-    )
 
 
 async def write_remote(event: AuditEventIn) -> str | None:
@@ -912,7 +966,7 @@ async def inspect_and_log(
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin"})
     try:
-        event = inspect_prompt(payload, current_user["email"])
+        event = inspect_prompt(payload, current_user)
     except DetectionError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
     remote_id = await write_remote(event)
@@ -928,54 +982,58 @@ async def gateway_chat(
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin", "user"})
 
-    engine = get_detection_engine()
     try:
-        detection = engine.detect(DetectRequest(prompt=payload.prompt))
+        verdict, vault = evaluate_prompt(
+            payload.prompt, current_user, payload.service, payload.department, payload.forward_to_ollama,
+        )
     except DetectionError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
-    sanitized_prompt = redact_from_detection(payload.prompt, detection)
-    policy_decision = get_policy_engine().evaluate(
-        PolicyInput(
-            user=UserContext(**current_user),
-            detection=detection,
-            service=payload.service,
-            department=payload.department,
-            forward_requested=payload.forward_to_ollama,
-        )
-    )
 
-    should_forward = policy_decision.allowed_to_forward
-    assistant_message, ollama_available = await call_ollama(sanitized_prompt) if should_forward else (
-        policy_decision.recommendation,
-        False,
-    )
-    audit_event = write_local(
-        build_gateway_audit_event(payload, current_user, detection, sanitized_prompt, policy_decision, ollama_available),
-        None,
-    )
+    detection, sanitized, assessment = verdict.detection, verdict.sanitized, verdict.assessment
+    should_forward = not verdict.blocked and verdict.policy.allowed_to_forward
+    if should_forward:
+        model_reply, ollama_available = await call_ollama(sanitized.text)
+        assistant_message = PROMPT_SANITIZER.restore(model_reply, sanitized, vault)
+    elif verdict.blocked:
+        assistant_message, ollama_available = f"Blocked: {verdict.reason} {verdict.policy.recommendation}", False
+    else:
+        assistant_message, ollama_available = verdict.policy.recommendation, False
 
-    if policy_decision.action == PolicyAction.BLOCK:
-        action = "Detected sensitive data -> policy blocked -> not forwarded."
-    elif policy_decision.action == PolicyAction.SANITIZE and ollama_available:
+    if verdict.blocked:
+        action = "Detected sensitive data -> blocked -> not forwarded."
+        audit_action = "Prompt blocked"
+    elif verdict.action == "SANITIZE" and ollama_available:
         action = "Detected sensitive data -> sanitized -> sent to local Ollama safely."
-    elif policy_decision.action == PolicyAction.SANITIZE:
+        audit_action = "Sanitized prompt sent to local Ollama"
+    elif verdict.action == "SANITIZE":
         action = "Detected sensitive data -> sanitized -> not forwarded."
+        audit_action = "Prompt sanitized; not forwarded"
     elif ollama_available:
         action = "No sensitive data detected -> sent to local Ollama."
+        audit_action = "Prompt allowed and sent to local Ollama"
     else:
         action = "No sensitive data detected -> forwarding disabled or provider unavailable."
-    decision = policy_decision.action.value
+        audit_action = "Prompt allowed; not forwarded"
+
+    audit_event = write_local(
+        verdict_audit_event(
+            verdict, current_user["email"], payload.department, payload.service, payload.source, payload.prompt, audit_action,
+        ),
+        None,
+    )
 
     return GatewayPromptOut(
         requestId=detection.request_id,
         userPrompt=payload.prompt,
-        sanitizedPrompt=sanitized_prompt,
+        sanitizedPrompt=sanitized.text,
         assistantMessage=assistant_message,
-        policyDecision=decision,
+        policyDecision=verdict.action,
         actionTaken=action,
-        riskLevel=detection.overall_risk.value,
-        riskScore=detection.risk_score,
-        policyResult=policy_decision.model_dump(mode="json"),
+        riskLevel=assessment.level.value,
+        riskScore=assessment.score / 100,
+        riskAssessment=assessment.model_dump(mode="json"),
+        replacements=[item.model_dump(mode="json") for item in sanitized.replacements],
+        policyResult=verdict.policy.model_dump(mode="json"),
         containsSensitiveData=detection.contains_sensitive_data,
         detectedEntities=[
             GatewayEntityOut(
@@ -993,13 +1051,56 @@ async def gateway_chat(
         ollamaModel=OLLAMA_MODEL,
         ollamaAvailable=ollama_available,
         componentExtensionPoints={
-            "component_02": "Prompt Sanitization & Risk Assessment can replace the current deterministic masking stage.",
+            "component_02": "Prompt Sanitization & Risk Assessment is active: typed placeholders and weighted risk scoring.",
             "component_03": "Security Policy & Access Control Engine is active for RBAC and ALLOW/SANITIZE/BLOCK decisions.",
         },
         componentPlaceholders={
-            "component_02": "Prompt Sanitization & Risk Assessment extension point prepared.",
+            "component_02": "Implemented by Component 02 prompt sanitizer and risk assessor.",
             "component_03": "Implemented by Component 03 policy engine.",
         },
+    )
+
+
+@app.post("/api/v1/sanitize", response_model=SanitizeOut)
+async def sanitize_prompt(
+    payload: SanitizeIn,
+    authorization: str | None = Header(default=None),
+) -> SanitizeOut:
+    """Sanitize and risk-score a prompt without forwarding it anywhere.
+
+    Used by the browser extension: the prompt is checked here, and the
+    extension submits only the returned sanitized text to the AI website.
+    """
+    init_db()
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin", "user"})
+    try:
+        verdict, _ = evaluate_prompt(payload.prompt, current_user, payload.service, payload.department, True)
+    except DetectionError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+
+    audit_action = {
+        "BLOCK": "Extension blocked prompt",
+        "SANITIZE": "Extension sanitized prompt",
+    }.get(verdict.action, "Extension allowed prompt")
+    event = verdict_audit_event(
+        verdict, current_user["email"], payload.department, payload.service, payload.source, payload.prompt, audit_action,
+    )
+    audit = write_local(event, await write_remote(event))
+
+    return SanitizeOut(
+        requestId=verdict.detection.request_id,
+        decision=verdict.action,
+        reason=verdict.reason,
+        # A blocked prompt must not be sent at all, so no text is handed back.
+        sanitizedPrompt="" if verdict.blocked else verdict.sanitized.text,
+        containsSensitiveData=verdict.detection.contains_sensitive_data,
+        riskLevel=verdict.assessment.level.value,
+        riskScore=verdict.assessment.score,
+        riskAssessment=verdict.assessment.model_dump(mode="json"),
+        replacements=[item.model_dump(mode="json") for item in verdict.sanitized.replacements],
+        policyResult=verdict.policy.model_dump(mode="json"),
+        auditId=audit.id,
     )
 
 
@@ -1127,7 +1228,7 @@ def audit_summary(
         "componentHealth": {
             "component_01": "Sensitive Data Detection Engine active",
             "component_04": "Audit Logging and Security Dashboard active",
-            "component_02": "Extension point prepared for Prompt Sanitization & Risk Assessment",
+            "component_02": "Prompt Sanitization & Risk Assessment active",
             "component_03": "Security Policy & Access Control Engine active",
         },
         "trend": [],

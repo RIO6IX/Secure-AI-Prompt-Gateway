@@ -138,7 +138,9 @@ def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monk
     assert body["containsSensitiveData"] is True
     assert body["policyDecision"] == "BLOCK"
     assert body["policyResult"]["rule_id"] == "POL-CRED-001"
-    assert "****" in body["sanitizedPrompt"]
+    assert body["replacements"][0]["category"] == "CREDENTIAL"
+    assert body["sanitizedPrompt"].startswith("Fix login. API key is [")
+    assert "[EMAIL_ADDRESS_1]" in body["sanitizedPrompt"]
     assert "sk-proj-ABC1234567890secret" not in body["sanitizedPrompt"]
     assert "sk-proj-ABC1234567890secret" not in body["assistantMessage"]
     assert body["componentExtensionPoints"]["component_02"].startswith("Prompt Sanitization")
@@ -188,7 +190,7 @@ def test_gateway_blocks_short_password_before_forwarding(tmp_path, monkeypatch) 
     assert body["containsSensitiveData"] is True
     assert body["policyDecision"] == "BLOCK"
     assert body["policyResult"]["rule_id"] == "POL-CRED-001"
-    assert body["sanitizedPrompt"] == "password = ****"
+    assert body["sanitizedPrompt"] == "password = [PASSWORD_1]"
     assert "1234" not in body["sanitizedPrompt"]
     assert "1234" not in body["assistantMessage"]
     assert body["ollamaAvailable"] is False
@@ -386,3 +388,79 @@ def test_auditor_can_review_logs_but_cannot_process_prompts(tmp_path, monkeypatc
     )
     assert blocked_prompt.status_code == 403
     assert blocked_prompt.json()["detail"] == "You do not have permission for this action"
+
+
+def test_sanitize_endpoint_returns_placeholders_and_writes_one_audit_record(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "extension.user@example.com")
+
+    response = client.post(
+        "/api/v1/sanitize",
+        headers=headers,
+        json={"prompt": "Reply to nimal@company.lk about the invoice", "service": "ChatGPT"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["decision"] == "SANITIZE"
+    assert body["sanitizedPrompt"] == "Reply to [EMAIL_ADDRESS_1] about the invoice"
+    assert body["replacements"][0]["placeholder"] == "[EMAIL_ADDRESS_1]"
+    assert "nimal@company.lk" not in response.text
+
+    events = client.get("/audit/events?actor=extension.user@example.com", headers=headers).json()
+    assert len(events) == 1
+    assert events[0]["source"] == "browser-extension"
+    assert events[0]["id"] == body["auditId"]
+    assert "nimal@company.lk" not in events[0]["maskedOutput"]
+
+
+def test_sanitize_endpoint_returns_no_text_for_blocked_prompt(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "extension.block@example.com")
+
+    response = client.post(
+        "/api/v1/sanitize",
+        headers=headers,
+        json={"prompt": "deploy with password = Sup3rS3cret!", "service": "ChatGPT"},
+    )
+
+    body = response.json()
+    assert body["decision"] == "BLOCK"
+    assert body["sanitizedPrompt"] == ""
+    assert "Sup3rS3cret!" not in response.text
+
+
+def test_critical_combined_risk_blocks_even_when_each_rule_only_sanitizes(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "risk.escalation@example.com")
+    prompt = (
+        "Refund Priya Fernando, NIC 199512345678, card 4539 1488 0343 6467 cvv 123, "
+        "IBAN GB82WEST12345698765432, phone +94 77 123 4567, email priya@acme.lk"
+    )
+
+    body = client.post("/api/v1/sanitize", headers=headers, json={"prompt": prompt}).json()
+
+    assert body["policyResult"]["action"] == "SANITIZE"
+    assert body["riskLevel"] == "CRITICAL"
+    assert body["decision"] == "BLOCK"
+    events = client.get("/audit/events?actor=risk.escalation@example.com", headers=headers).json()
+    assert events[0]["status"] == "Blocked"
+    assert events[0]["policyRule"].startswith("RISK-CRITICAL")
+
+
+def test_gateway_restores_pii_in_model_reply_only(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "restore.user@example.com")
+    sent: list[str] = []
+
+    async def fake_ollama(prompt: str) -> tuple[str, bool]:
+        sent.append(prompt)
+        return "Draft: Hello [EMAIL_ADDRESS_1], your request was received.", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    body = client.post(
+        "/gateway/chat",
+        headers=headers,
+        json={"prompt": "Write a short reply to nimal@company.lk", "forward_to_ollama": True},
+    ).json()
+
+    assert sent == ["Write a short reply to [EMAIL_ADDRESS_1]"]
+    assert body["assistantMessage"] == "Draft: Hello nimal@company.lk, your request was received."
+    assert body["policyDecision"] == "SANITIZE"
+    assert body["riskAssessment"]["factors"][0]["entity_type"] == "EMAIL_ADDRESS"
