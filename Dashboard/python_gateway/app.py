@@ -30,7 +30,7 @@ from detection_engine.core.logging import configure_logging
 from detection_engine.models.request import DetectRequest
 from detection_engine.models.response import DetectedEntity, DetectionResponse
 from detection_engine.services.health_service import health_payload
-from prompt_sanitizer import PromptSanitizer, RecommendedAction, RiskAssessment, RiskAssessor, SanitizedPrompt
+from prompt_sanitizer import PromptSanitizer, ResponseGuard, RecommendedAction, RiskAssessment, RiskAssessor, SanitizedPrompt
 from security_policy import PolicyAction, PolicyDecision, PolicyEngine, PolicyInput, UserContext
 
 
@@ -58,6 +58,10 @@ LOGIN_MAX_ATTEMPTS = int(os.getenv("LOGIN_MAX_ATTEMPTS", "5"))
 LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_WINDOW_SECONDS", "900"))
 RISK_HISTORY_MINUTES = int(os.getenv("RISK_HISTORY_MINUTES", "60"))
 PROMPT_RATE_LIMIT_PER_MINUTE = int(os.getenv("PROMPT_RATE_LIMIT_PER_MINUTE", "60"))
+# "mask" (default): the reply shows masked previews (n***@company.lk) where the
+# model used placeholders. "restore": the requester sees their original values.
+# Sensitive data the model generates itself is masked in both modes.
+REPLY_PII_MODE = os.getenv("REPLY_PII_MODE", "mask").strip().lower()
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
@@ -168,6 +172,8 @@ class GatewayPromptOut(BaseModel):
     auditEvents: list[dict[str, object]]
     ollamaModel: str
     ollamaAvailable: bool
+    replyMaskedCount: int = 0
+    replyFindingTypes: list[str] = []
     componentExtensionPoints: dict[str, str]
     componentPlaceholders: dict[str, str]
 
@@ -455,6 +461,7 @@ def get_policy_engine() -> PolicyEngine:
 
 PROMPT_SANITIZER = PromptSanitizer()
 RISK_ASSESSOR = RiskAssessor()
+RESPONSE_GUARD = ResponseGuard(lambda text: get_detection_engine().detect(DetectRequest(prompt=text)))
 ACTION_STRICTNESS = {"ALLOW": 0, "SANITIZE": 1, "BLOCK": 2}
 
 
@@ -1053,10 +1060,17 @@ async def gateway_chat(
     should_forward = not verdict.blocked and verdict.policy.allowed_to_forward
     if should_forward:
         model_reply, ollama_available = await call_ollama(sanitized.text)
-        assistant_message = PROMPT_SANITIZER.restore(model_reply, sanitized, vault)
-    elif verdict.blocked:
-        assistant_message, ollama_available = f"Blocked: {verdict.reason} {verdict.policy.recommendation}", False
+        keep: frozenset[str] = frozenset()
+        if REPLY_PII_MODE == "restore":
+            model_reply = PROMPT_SANITIZER.restore(model_reply, sanitized, vault)
+            keep = frozenset(vault[item.placeholder] for item in sanitized.replacements if item.restorable)
+        guarded = RESPONSE_GUARD.guard(model_reply, sanitized, keep_values=keep)
+        assistant_message = guarded.text
     else:
+        guarded = None
+    if verdict.blocked:
+        assistant_message, ollama_available = f"Blocked: {verdict.reason} {verdict.policy.recommendation}", False
+    elif not should_forward:
         assistant_message, ollama_available = verdict.policy.recommendation, False
 
     if verdict.blocked:
@@ -1075,6 +1089,8 @@ async def gateway_chat(
         action = "No sensitive data detected -> forwarding disabled or provider unavailable."
         audit_action = "Prompt allowed; not forwarded"
 
+    if guarded is not None and guarded.findings_masked:
+        audit_action += f"; {guarded.findings_masked} sensitive value(s) masked in reply"
     audit_event = write_local(
         verdict_audit_event(
             verdict, current_user["email"], payload.department, payload.service, payload.source, payload.prompt, audit_action,
@@ -1110,6 +1126,8 @@ async def gateway_chat(
         auditEvents=[audit_event.model_dump(exclude={"originalPrompt"})],
         ollamaModel=OLLAMA_MODEL,
         ollamaAvailable=ollama_available,
+        replyMaskedCount=guarded.total_masked if guarded else 0,
+        replyFindingTypes=guarded.finding_types if guarded else [],
         componentExtensionPoints={
             "component_02": "Prompt Sanitization & Risk Assessment is active: typed placeholders and weighted risk scoring.",
             "component_03": "Security Policy & Access Control Engine is active for RBAC and ALLOW/SANITIZE/BLOCK decisions.",

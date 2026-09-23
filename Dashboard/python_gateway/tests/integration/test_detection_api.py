@@ -453,8 +453,8 @@ def test_critical_combined_risk_blocks_even_when_each_rule_only_sanitizes(tmp_pa
     assert events[0]["policyRule"].startswith("RISK-CRITICAL")
 
 
-def test_gateway_restores_pii_in_model_reply_only(tmp_path, monkeypatch) -> None:
-    headers = register_admin(tmp_path, monkeypatch, "restore.user@example.com")
+def test_gateway_reply_shows_masked_values_by_default(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "masked.reply@example.com")
     sent: list[str] = []
 
     async def fake_ollama(prompt: str) -> tuple[str, bool]:
@@ -469,9 +469,49 @@ def test_gateway_restores_pii_in_model_reply_only(tmp_path, monkeypatch) -> None
     ).json()
 
     assert sent == ["Write a short reply to [EMAIL_ADDRESS_1]"]
-    assert body["assistantMessage"] == "Draft: Hello nimal@company.lk, your request was received."
+    assert body["assistantMessage"] == "Draft: Hello n***@company.lk, your request was received."
+    assert "nimal@company.lk" not in body["assistantMessage"]
+    assert body["replyMaskedCount"] == 1
     assert body["policyDecision"] == "SANITIZE"
-    assert body["riskAssessment"]["factors"][0]["entity_type"] == "EMAIL_ADDRESS"
+
+
+def test_gateway_restore_mode_returns_the_requesters_own_values(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "restore.mode@example.com")
+    monkeypatch.setattr(gateway_app, "REPLY_PII_MODE", "restore")
+
+    async def fake_ollama(prompt: str) -> tuple[str, bool]:
+        return "Draft: Hello [EMAIL_ADDRESS_1], your request was received.", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    body = client.post(
+        "/gateway/chat",
+        headers=headers,
+        json={"prompt": "Write a short reply to nimal@company.lk", "forward_to_ollama": True},
+    ).json()
+
+    assert body["assistantMessage"] == "Draft: Hello nimal@company.lk, your request was received."
+
+
+def test_secrets_generated_by_the_model_are_masked_and_audited(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "model.leak@example.com")
+
+    async def fake_ollama(prompt: str) -> tuple[str, bool]:
+        return "Use key AKIAZ7Q2WJ5K3LMNOPQR with password = hunter22 and card 4539 1488 0343 6467.", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    body = client.post(
+        "/gateway/chat",
+        headers=headers,
+        json={"prompt": "Give me an example AWS config", "forward_to_ollama": True},
+    ).json()
+
+    reply = body["assistantMessage"]
+    for leaked in ("AKIAZ7Q2WJ5K3LMNOPQR", "hunter22", "4539 1488 0343 6467"):
+        assert leaked not in reply
+    assert "**** **** **** 6467" in reply
+    assert set(body["replyFindingTypes"]) == {"AWS_ACCESS_KEY", "PASSWORD", "CREDIT_CARD_NUMBER"}
+    events = client.get("/audit/events?actor=model.leak@example.com", headers=headers).json()
+    assert "3 sensitive value(s) masked in reply" in events[0]["action"]
 
 
 def test_ordinary_question_with_a_place_name_is_allowed(tmp_path, monkeypatch) -> None:
