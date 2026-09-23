@@ -34,3 +34,17 @@ last check. It never stores prompt text.
    account. Auditor accounts are read-only and cannot submit prompts.
 4. Paste a test prompt into the popup's **Test a Prompt** box, or type on a
    supported AI site.
+
+## Tests
+
+The service worker is tested against a mock gateway. The tests need
+Node.js 22 and no npm packages:
+
+```
+cd browser-extension
+npm test        # login, ALLOW/SANITIZE/BLOCK, badges, 429, outages, expired session
+npm run check   # syntax check of all extension scripts
+```
+
+The toolbar badge shows `!` on the tab where values were replaced and
+`X` where a prompt was blocked.

@@ -50,7 +50,21 @@ async function callGateway(path, { method = "GET", body, auth = true } = {}) {
   return { ok: true, status: response.status, data };
 }
 
-async function scanPrompt({ prompt, service }) {
+// Toolbar badge for the tab the prompt came from: nothing for ALLOW,
+// "!" when values were replaced, "X" when the prompt was blocked.
+const BADGES = {
+  SANITIZE: { text: "!", color: "#d97706" },
+  BLOCK: { text: "X", color: "#d92d20" },
+};
+
+function showBadge(tabId, decision) {
+  if (tabId === undefined || !chrome.action) return;
+  const badge = BADGES[decision];
+  chrome.action.setBadgeText({ tabId, text: badge ? badge.text : "" });
+  if (badge) chrome.action.setBadgeBackgroundColor({ tabId, color: badge.color });
+}
+
+async function scanPrompt({ prompt, service }, sender = {}) {
   const result = await callGateway("/api/v1/sanitize", {
     method: "POST",
     body: { prompt, service, source: "browser-extension" },
@@ -69,6 +83,7 @@ async function scanPrompt({ prompt, service }) {
         at: new Date().toISOString(),
       },
     });
+    showBadge(sender.tab && sender.tab.id, decision);
   }
   return result;
 }
@@ -101,7 +116,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id) return false;
   const handler = handlers[message && message.type];
   if (!handler) return false;
-  handler(message.payload || {})
+  handler(message.payload || {}, sender)
     .then(sendResponse)
     .catch((error) => sendResponse({ ok: false, status: 0, error: String(error && error.message ? error.message : error) }));
   return true; // keep the channel open for the async response
