@@ -11,8 +11,10 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def reset_prompt_rate_limit():
     gateway_app.prompt_rate_limiter.reset()
+    gateway_app.CONVERSATIONS.reset()
     yield
     gateway_app.prompt_rate_limiter.reset()
+    gateway_app.CONVERSATIONS.reset()
 
 
 def test_detect_endpoint() -> None:
@@ -457,7 +459,7 @@ def test_gateway_reply_shows_masked_values_by_default(tmp_path, monkeypatch) -> 
     headers = register_admin(tmp_path, monkeypatch, "masked.reply@example.com")
     sent: list[str] = []
 
-    async def fake_ollama(prompt: str) -> tuple[str, bool]:
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
         sent.append(prompt)
         return "Draft: Hello [EMAIL_ADDRESS_1], your request was received.", True
 
@@ -479,7 +481,7 @@ def test_gateway_restore_mode_returns_the_requesters_own_values(tmp_path, monkey
     headers = register_admin(tmp_path, monkeypatch, "restore.mode@example.com")
     monkeypatch.setattr(gateway_app, "REPLY_PII_MODE", "restore")
 
-    async def fake_ollama(prompt: str) -> tuple[str, bool]:
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
         return "Draft: Hello [EMAIL_ADDRESS_1], your request was received.", True
 
     monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
@@ -495,7 +497,7 @@ def test_gateway_restore_mode_returns_the_requesters_own_values(tmp_path, monkey
 def test_secrets_generated_by_the_model_are_masked_and_audited(tmp_path, monkeypatch) -> None:
     headers = register_admin(tmp_path, monkeypatch, "model.leak@example.com")
 
-    async def fake_ollama(prompt: str) -> tuple[str, bool]:
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
         return "Use key AKIAZ7Q2WJ5K3LMNOPQR with password = hunter22 and card 4539 1488 0343 6467.", True
 
     monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
@@ -549,3 +551,76 @@ def test_prompt_endpoints_are_rate_limited_per_user(tmp_path, monkeypatch) -> No
     limited = client.post("/gateway/chat", headers=headers, json={"prompt": "hi", "forward_to_ollama": False})
     assert limited.status_code == 429
     assert int(limited.headers["retry-after"]) >= 1
+
+
+
+def test_conversation_keeps_placeholders_consistent_and_sends_sanitized_history(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "multi.turn@example.com")
+    calls: list[tuple[str, list[dict[str, str]]]] = []
+
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
+        calls.append((prompt, list(history or [])))
+        return f"reply {len(calls)} about [EMAIL_ADDRESS_1]", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    first = client.post("/gateway/chat", headers=headers, json={"prompt": "Draft a note to nimal@company.lk"}).json()
+    conversation_id = first["conversationId"]
+    second = client.post(
+        "/gateway/chat",
+        headers=headers,
+        json={"prompt": "Also cc kamal@company.lk and nimal@company.lk", "conversation_id": conversation_id},
+    ).json()
+
+    assert calls[0] == ("Draft a note to [EMAIL_ADDRESS_1]", [])
+    # Same person keeps [EMAIL_ADDRESS_1]; the new person gets _2, not _1 again.
+    assert calls[1][0] == "Also cc [EMAIL_ADDRESS_2] and [EMAIL_ADDRESS_1]"
+    assert calls[1][1] == [
+        {"role": "user", "content": "Draft a note to [EMAIL_ADDRESS_1]"},
+        {"role": "assistant", "content": "reply 1 about [EMAIL_ADDRESS_1]"},
+    ]
+    assert second["conversationId"] == conversation_id
+    # A placeholder from an earlier turn is still masked in later replies.
+    assert second["assistantMessage"] == "reply 2 about n***@company.lk"
+    assert "company.lk" not in str(calls)
+
+
+def test_blocked_prompt_does_not_enter_the_conversation(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "blocked.turn@example.com")
+    calls: list[list[dict[str, str]]] = []
+
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
+        calls.append(list(history or []))
+        return "ok", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    conversation_id = client.post("/gateway/chat", headers=headers, json={"prompt": "hello"}).json()["conversationId"]
+    blocked = client.post(
+        "/gateway/chat", headers=headers,
+        json={"prompt": "password = Sup3rS3cret!", "conversation_id": conversation_id},
+    ).json()
+    client.post("/gateway/chat", headers=headers, json={"prompt": "thanks", "conversation_id": conversation_id})
+
+    assert blocked["policyDecision"] == "BLOCK"
+    assert calls[-1] == [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "ok"}]
+
+
+def test_conversations_are_private_and_can_be_ended(tmp_path, monkeypatch) -> None:
+    owner = register_admin(tmp_path, monkeypatch, "owner.conv@example.com")
+    other = client.post(
+        "/admin/users", headers=owner,
+        json={"name": "Other", "email": "other.conv@example.com", "password": "OtherPass123!", "role": "user"},
+    ).json()
+    other_headers = {"authorization": f"Bearer {other['token']}"}
+
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
+        return "ok", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    conversation_id = client.post("/gateway/chat", headers=owner, json={"prompt": "hello"}).json()["conversationId"]
+
+    hijack = client.post("/gateway/chat", headers=other_headers, json={"prompt": "hi", "conversation_id": conversation_id})
+    assert hijack.status_code == 404
+    assert client.delete(f"/gateway/conversations/{conversation_id}", headers=other_headers).status_code == 404
+    assert client.delete(f"/gateway/conversations/{conversation_id}", headers=owner).status_code == 200
+    gone = client.post("/gateway/chat", headers=owner, json={"prompt": "hi", "conversation_id": conversation_id})
+    assert gone.status_code == 404

@@ -66,6 +66,7 @@ class ResponseGuard:
         reply: str,
         sanitized: SanitizedPrompt,
         keep_values: frozenset[str] = frozenset(),
+        known_placeholders: dict[str, str] | None = None,
     ) -> GuardedReply:
         """Mask placeholders and sensitive values in ``reply``.
 
@@ -74,7 +75,8 @@ class ResponseGuard:
         """
         text = reply
         placeholders_masked = 0
-        seen: dict[str, str] = {}
+        # Placeholders from earlier turns of the conversation, then this prompt's.
+        seen: dict[str, str] = dict(known_placeholders or {})
         for item in sanitized.replacements:
             seen.setdefault(item.placeholder, item.masked_value)
         for placeholder in sorted(seen, key=len, reverse=True):

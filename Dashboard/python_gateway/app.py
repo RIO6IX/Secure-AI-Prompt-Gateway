@@ -30,7 +30,7 @@ from detection_engine.core.logging import configure_logging
 from detection_engine.models.request import DetectRequest
 from detection_engine.models.response import DetectedEntity, DetectionResponse
 from detection_engine.services.health_service import health_payload
-from prompt_sanitizer import PromptSanitizer, ResponseGuard, RecommendedAction, RiskAssessment, RiskAssessor, SanitizedPrompt
+from prompt_sanitizer import ConversationAccessError, ConversationStore, PromptSanitizer, PseudonymMap, ResponseGuard, RecommendedAction, RiskAssessment, RiskAssessor, SanitizedPrompt
 from security_policy import PolicyAction, PolicyDecision, PolicyEngine, PolicyInput, UserContext
 
 
@@ -62,6 +62,8 @@ PROMPT_RATE_LIMIT_PER_MINUTE = int(os.getenv("PROMPT_RATE_LIMIT_PER_MINUTE", "60
 # model used placeholders. "restore": the requester sees their original values.
 # Sensitive data the model generates itself is masked in both modes.
 REPLY_PII_MODE = os.getenv("REPLY_PII_MODE", "mask").strip().lower()
+CONVERSATION_TTL_MINUTES = int(os.getenv("CONVERSATION_TTL_MINUTES", "30"))
+CONVERSATION_MAX_MESSAGES = int(os.getenv("CONVERSATION_MAX_MESSAGES", "20"))
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
@@ -143,6 +145,8 @@ class GatewayPromptIn(BaseModel):
     department: str = "Engineering"
     source: str = "secure-chat-gateway"
     forward_to_ollama: bool = True
+    # Continue an earlier chat; omit to start a new conversation.
+    conversation_id: str | None = Field(default=None, max_length=64)
 
 
 class GatewayEntityOut(BaseModel):
@@ -157,6 +161,7 @@ class GatewayEntityOut(BaseModel):
 
 class GatewayPromptOut(BaseModel):
     requestId: str
+    conversationId: str
     userPrompt: str
     sanitizedPrompt: str
     assistantMessage: str
@@ -461,6 +466,7 @@ def get_policy_engine() -> PolicyEngine:
 
 PROMPT_SANITIZER = PromptSanitizer()
 RISK_ASSESSOR = RiskAssessor()
+CONVERSATIONS = ConversationStore(ttl_seconds=CONVERSATION_TTL_MINUTES * 60, max_messages=CONVERSATION_MAX_MESSAGES)
 RESPONSE_GUARD = ResponseGuard(lambda text: get_detection_engine().detect(DetectRequest(prompt=text)))
 ACTION_STRICTNESS = {"ALLOW": 0, "SANITIZE": 1, "BLOCK": 2}
 
@@ -546,6 +552,7 @@ def evaluate_prompt(
     service: str,
     department: str,
     forward_requested: bool,
+    mapping: PseudonymMap | None = None,
 ) -> tuple[PromptVerdict, dict[str, str]]:
     """Run detection -> sanitization -> risk assessment -> policy.
 
@@ -555,7 +562,7 @@ def evaluate_prompt(
     Returns the verdict and the in-memory placeholder vault.
     """
     detection = get_detection_engine().detect(DetectRequest(prompt=prompt))
-    sanitized, vault = PROMPT_SANITIZER.sanitize(prompt, detection)
+    sanitized, vault = PROMPT_SANITIZER.sanitize(prompt, detection, mapping)
     assessment = RISK_ASSESSOR.assess(detection, recent_blocked=recent_blocked_count(user["email"]))
     policy = get_policy_engine().evaluate(
         PolicyInput(
@@ -729,26 +736,29 @@ def title_case_risk(risk: str) -> RiskLevel:
     return "Low"
 
 
-async def call_ollama(sanitized_prompt: str) -> tuple[str, bool]:
+async def call_ollama(sanitized_prompt: str, history: list[dict[str, str]] | None = None) -> tuple[str, bool]:
+    """Send the sanitized prompt, with the conversation's sanitized history, to Ollama."""
     system = (
         "You are the local Secure AI Prompt Gateway assistant. "
-        "Answer only using the sanitized prompt. Never ask for or reconstruct redacted secrets."
+        "Answer only using the sanitized prompt. Never ask for or reconstruct redacted secrets. "
+        "Values shown as [TYPE_N] placeholders were removed for privacy; refer to them by the same "
+        "placeholder, and the same placeholder means the same value throughout the conversation."
     )
     try:
         async with httpx.AsyncClient(timeout=30) as client:
+            messages = [{"role": "system", "content": system}, *(history or []), {"role": "user", "content": sanitized_prompt}]
             response = await client.post(
-                f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate",
+                f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
                 json={
                     "model": OLLAMA_MODEL,
-                    "prompt": sanitized_prompt,
-                    "system": system,
+                    "messages": messages,
                     "stream": False,
                     "options": {"temperature": 0.2},
                 },
             )
             response.raise_for_status()
             body = response.json()
-            text = str(body.get("response") or "").strip()
+            text = str((body.get("message") or {}).get("content") or "").strip()
             return text or "The sanitized prompt was processed by the local Ollama model.", True
     except Exception:
         return (
@@ -1050,8 +1060,17 @@ async def gateway_chat(
     prompt_rate_limiter.check(current_user["email"])
 
     try:
+        conversation = CONVERSATIONS.open(
+            payload.conversation_id, current_user["email"], keep_values=REPLY_PII_MODE == "restore",
+        )
+    except ConversationAccessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Work on a copy: values from a blocked prompt must not stay in the map.
+    working_map = conversation.mapping.copy()
+    try:
         verdict, vault = evaluate_prompt(
             payload.prompt, current_user, payload.service, payload.department, payload.forward_to_ollama,
+            mapping=working_map,
         )
     except DetectionError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
@@ -1059,12 +1078,22 @@ async def gateway_chat(
     detection, sanitized, assessment = verdict.detection, verdict.sanitized, verdict.assessment
     should_forward = not verdict.blocked and verdict.policy.allowed_to_forward
     if should_forward:
-        model_reply, ollama_available = await call_ollama(sanitized.text)
+        raw_reply, ollama_available = await call_ollama(sanitized.text, conversation.history())
+        if ollama_available:
+            # The model only ever saw placeholders, so its raw reply is safe to
+            # keep as context for the next turn.
+            CONVERSATIONS.record_exchange(conversation, working_map, sanitized.text, raw_reply)
+        model_reply = raw_reply
         keep: frozenset[str] = frozenset()
         if REPLY_PII_MODE == "restore":
-            model_reply = PROMPT_SANITIZER.restore(model_reply, sanitized, vault)
-            keep = frozenset(vault[item.placeholder] for item in sanitized.replacements if item.restorable)
-        guarded = RESPONSE_GUARD.guard(model_reply, sanitized, keep_values=keep)
+            vault = {**working_map.values, **vault}
+            model_reply = PROMPT_SANITIZER.restore_all(model_reply, vault)
+            keep = frozenset(working_map.values.values()) | frozenset(
+                vault[item.placeholder] for item in sanitized.replacements if item.restorable
+            )
+        guarded = RESPONSE_GUARD.guard(
+            model_reply, sanitized, keep_values=keep, known_placeholders=working_map.masked,
+        )
         assistant_message = guarded.text
     else:
         guarded = None
@@ -1100,6 +1129,7 @@ async def gateway_chat(
 
     return GatewayPromptOut(
         requestId=detection.request_id,
+        conversationId=conversation.id,
         userPrompt=payload.prompt,
         sanitizedPrompt=sanitized.text,
         assistantMessage=assistant_message,
@@ -1137,6 +1167,15 @@ async def gateway_chat(
             "component_03": "Implemented by Component 03 policy engine.",
         },
     )
+
+
+@app.delete("/gateway/conversations/{conversation_id}")
+def end_conversation(conversation_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    """Forget a conversation's history and placeholder map ("New chat")."""
+    current_user = get_auth_user(authorization)
+    if not CONVERSATIONS.discard(conversation_id, current_user["email"]):
+        raise HTTPException(status_code=404, detail="Conversation not found or expired.")
+    return {"status": "deleted", "id": conversation_id}
 
 
 @app.post("/api/v1/sanitize", response_model=SanitizeOut)

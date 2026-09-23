@@ -16,6 +16,7 @@ Code lives in `python_gateway/prompt_sanitizer/`.
 - **Risk assessor** (`risk_assessment.py`): gives each entity type a weight (private key 80, cloud or API key 60, card 50, password 50, NIC 30, email 15, phone 10, location 5, and so on). The weight is scaled by detection confidence, with a smaller add-on for repeats and +10 for each extra data category in the same prompt. The score is capped at 100: LOW < 25 ≤ MEDIUM < 50 ≤ HIGH < 80 ≤ CRITICAL. The assessor recommends ALLOW, SANITIZE or BLOCK and lists the factors behind the score.
 - **Repeated attempts**: each prompt from the same user that was blocked in the last `RISK_HISTORY_MINUTES` adds 10 points to their next *sensitive* prompt, up to +30. This catches someone trying variations of a secret until one gets through. Clean prompts are never penalised.
 - **Rate limit**: `/gateway/chat`, `/api/v1/sanitize` and `/inspect` accept `PROMPT_RATE_LIMIT_PER_MINUTE` requests per user. Beyond that they return HTTP 429 with a `Retry-After` header.
+- **Conversations** (`conversation.py`): the chat keeps context between messages. The model receives the *sanitized* history through Ollama's chat API. A conversation-wide `PseudonymMap` gives each value the same placeholder in every turn, and a new value never reuses an earlier number. The map stores keyed HMAC hashes rather than plaintext values. Conversations belong to one user, live only in memory, expire when idle and can be ended with `DELETE /gateway/conversations/{id}`. A blocked prompt never enters the history.
 - **Reply guard** (`response_guard.py`): the model's reply is checked before anyone sees it. Placeholders the model repeats, even rewritten ones like `[Email_Address_1]`, are replaced with masked previews (`n***@company.lk`, `**** **** **** 6467`). Keys, passwords, card numbers and other sensitive values the model generates itself are masked too, and counted in the audit record. This addresses OWASP LLM02 (sensitive information disclosure).
 - **Decision**: the gateway applies the stricter of the Component 02 risk recommendation and the Component 03 policy decision. A prompt that is only "sanitize" under each rule is still blocked when the combined risk is critical, for example a card, NIC, IBAN and contact details for one customer.
 
@@ -161,6 +162,7 @@ Copy `.env.example` to `.env` and pass it to uvicorn with `--env-file ../.env`. 
 - `SPACY_MODEL=en_core_web_sm`
 - `RISK_HISTORY_MINUTES=60` (recent blocked prompts raise the next sensitive prompt's risk)
 - `REPLY_PII_MODE=mask` (`mask` shows n***@company.lk in model replies, `restore` shows the requester's own values)
+- `CONVERSATION_TTL_MINUTES=30`, `CONVERSATION_MAX_MESSAGES=20` (in-memory chat context)
 - `PROMPT_RATE_LIMIT_PER_MINUTE=60` (per-user limit on the prompt endpoints, HTTP 429 beyond it)
 - `NER_MAX_CHARS=20000` (NER coverage cap; regex, checksum and entropy rules always scan the whole prompt)
 
