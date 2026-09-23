@@ -13,6 +13,10 @@
     "copilot.microsoft.com": "Microsoft Copilot",
     "claude.ai": "Claude",
     "www.perplexity.ai": "Perplexity",
+    "chat.deepseek.com": "DeepSeek",
+    "chat.mistral.ai": "Mistral Le Chat",
+    "poe.com": "Poe",
+    "m365.cloud.microsoft": "Microsoft 365 Copilot",
   };
   const service = SERVICES[location.hostname] || location.hostname;
 
@@ -182,6 +186,29 @@
     if (event.key !== "Enter" || event.shiftKey || event.isComposing || !event.isTrusted) return;
     const editor = findEditor(event.target);
     if (editor && editor.contains(event.target)) intercept(event, editor);
+  }, true);
+
+  // Early warning when sensitive text is pasted. This only previews the text
+  // (detection, no audit record); the real check still happens on send.
+  const PASTE_MIN_CHARS = 8;
+  document.addEventListener("paste", (event) => {
+    if (!event.isTrusted || !(event.target instanceof Element)) return;
+    const editor = findEditor(event.target);
+    if (!editor || !editor.contains(event.target)) return;
+    const pasted = event.clipboardData ? event.clipboardData.getData("text/plain") : "";
+    if (pasted.trim().length < PASTE_MIN_CHARS) return;
+    chrome.runtime.sendMessage({ type: "PREVIEW_PROMPT", payload: { prompt: pasted } })
+      .then((result) => {
+        if (!result || !result.ok || !result.data.sensitive) return;
+        const { riskLevel, types } = result.data;
+        show(
+          riskLevel === "CRITICAL" ? "block" : "warn",
+          `Sensitive data pasted (${riskLevel})`,
+          "It will be replaced with placeholders, or the prompt blocked, when you send. Remove it now if it is not needed.",
+          types.map((type) => type.replaceAll("_", " ").toLowerCase()),
+        );
+      })
+      .catch(() => undefined);
   }, true);
 
   document.addEventListener("click", (event) => {

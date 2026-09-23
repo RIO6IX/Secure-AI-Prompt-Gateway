@@ -51,6 +51,15 @@ before(async () => {
       const verdict = DECISIONS[body.prompt];
       return json(response, 200, { ...verdict, riskLevel: "LOW", riskScore: 10, reason: "test", auditId: "AUD-1" });
     }
+    if (request.url === "/api/v1/detect") {
+      const hasEmail = body.prompt.includes("@");
+      return json(response, 200, {
+        overall_risk: hasEmail ? "MEDIUM" : "LOW",
+        detected_entities: hasEmail
+          ? [{ entity_type: "EMAIL_ADDRESS" }, { entity_type: "LOCATION" }]
+          : [{ entity_type: "LOCATION" }],
+      });
+    }
     return json(response, 404, { detail: "not found" });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -155,4 +164,17 @@ test("an expired session clears the stored token", async () => {
 test("messages from other extensions are ignored", async () => {
   const result = await send("SCAN_PROMPT", { prompt: "hello" }, { id: "some-other-extension" });
   assert.equal(result, "IGNORED");
+});
+
+test("paste preview reports sensitive types without storing or auditing", async () => {
+  await send("LOGIN", { email: "ext@acme.lk", password: VALID_PASSWORD });
+
+  const sensitive = await send("PREVIEW_PROMPT", { prompt: "mail nimal@company.lk in Colombo" });
+  // JSON round-trip: objects built inside the VM have that realm's prototypes.
+  assert.deepEqual(JSON.parse(JSON.stringify(sensitive.data)), { sensitive: true, riskLevel: "MEDIUM", types: ["EMAIL_ADDRESS"] });
+
+  const clean = await send("PREVIEW_PROMPT", { prompt: "What is the capital of Sri Lanka?" });
+  assert.equal(clean.data.sensitive, false);  // a place name alone is not a warning
+  assert.equal(store.lastScan, undefined);
+  assert.equal(lastSanitizeBody, undefined);  // preview never hits the audited endpoint
 });

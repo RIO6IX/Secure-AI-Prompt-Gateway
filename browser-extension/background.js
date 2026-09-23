@@ -101,8 +101,24 @@ async function health() {
   return callGateway("/health", { auth: false });
 }
 
+// Types that are context, not data to protect (see Component 02 sanitizer).
+const PREVIEW_IGNORED_TYPES = new Set(["LOCATION", "ORGANIZATION", "SOURCE_CODE", "PRIVATE_SOURCE_CODE"]);
+
+async function previewPrompt({ prompt }) {
+  // Detection only: no audit record, nothing stored. Used for paste warnings.
+  const result = await callGateway("/api/v1/detect", { method: "POST", body: { prompt } });
+  if (!result.ok) return result;
+  const types = [...new Set(
+    result.data.detected_entities
+      .map((entity) => entity.entity_type)
+      .filter((type) => !PREVIEW_IGNORED_TYPES.has(type)),
+  )];
+  return { ok: true, data: { sensitive: types.length > 0, riskLevel: result.data.overall_risk, types } };
+}
+
 const handlers = {
   SCAN_PROMPT: scanPrompt,
+  PREVIEW_PROMPT: previewPrompt,
   LOGIN: login,
   LOGOUT: async () => {
     await chrome.storage.local.remove(["token", "user", "lastScan"]);
