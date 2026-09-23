@@ -32,8 +32,12 @@ REGEX_RULES: tuple[RegexRule, ...] = (
     RegexRule("password_assignment", "PASSWORD", Category.CREDENTIAL, re.compile(r"(?i)\b(?:password|passwd|pwd)\s*(?:is|:|=)\s*[\"']?([^\s,;\"']{1,128})[\"']?"), 0.90, RiskLevel.CRITICAL, ("password", "pwd"), None),
     RegexRule("generic_api_key", "GENERIC_API_KEY", Category.CREDENTIAL, re.compile(r"(?i)\b(?:api[_ -]?key|secret|token)\s*[:=]\s*[\"']?([A-Za-z0-9._~+/=-]{16,128})[\"']?"), 0.78, RiskLevel.HIGH, ("api key", "secret", "token"), None),
     RegexRule("database_connection_string", "DATABASE_CONNECTION_STRING", Category.CREDENTIAL, re.compile(r"(?i)\b(?:postgresql|postgres|mysql|mongodb|redis|mssql)://[^\s'\"<>]{8,256}"), 0.88, RiskLevel.CRITICAL, ("database", "connection", "password"), None),
-    RegexRule("ssh_private_key_header", "SSH_PRIVATE_KEY", Category.CREDENTIAL, re.compile(r"-----BEGIN OPENSSH PRIVATE KEY-----"), 0.99, RiskLevel.CRITICAL, ("private key",), None),
-    RegexRule("pem_private_key_header", "PEM_PRIVATE_KEY", Category.CREDENTIAL, re.compile(r"-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----"), 0.99, RiskLevel.CRITICAL, ("private key",), None),
+    # Private keys match the whole block, not just the BEGIN line: the key
+    # material is in the body. A block pasted without its END line (a common
+    # truncated paste) runs to the end of the prompt.
+    RegexRule("ssh_private_key_block", "SSH_PRIVATE_KEY", Category.CREDENTIAL, re.compile(r"-----BEGIN OPENSSH PRIVATE KEY-----[\s\S]*?(?:-----END OPENSSH PRIVATE KEY-----|\Z)"), 0.99, RiskLevel.CRITICAL, ("private key",), None),
+    RegexRule("pem_private_key_block", "PEM_PRIVATE_KEY", Category.CREDENTIAL, re.compile(r"-----BEGIN (?:RSA |EC |DSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |DSA |ENCRYPTED )?PRIVATE KEY-----|\Z)"), 0.99, RiskLevel.CRITICAL, ("private key",), None),
+    RegexRule("pgp_private_key_block", "PGP_PRIVATE_KEY", Category.CREDENTIAL, re.compile(r"-----BEGIN PGP PRIVATE KEY BLOCK-----[\s\S]*?(?:-----END PGP PRIVATE KEY BLOCK-----|\Z)"), 0.99, RiskLevel.CRITICAL, ("private key", "pgp"), None),
     RegexRule("email_address", "EMAIL_ADDRESS", Category.PII, re.compile(r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}\b"), 0.68, RiskLevel.MEDIUM, ("email", "contact"), "email"),
     RegexRule("phone_number", "PHONE_NUMBER", Category.PII, re.compile(r"(?<![\w+.-])(?:\+\d{1,3}[-.\s]?|0)?\(?\d{2,4}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?![\w-])"), 0.56, RiskLevel.MEDIUM, ("phone", "mobile", "call"), None),
     RegexRule("ipv4_address", "IP_ADDRESS", Category.PII, re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), 0.58, RiskLevel.MEDIUM, ("ip", "host", "server"), "ip"),

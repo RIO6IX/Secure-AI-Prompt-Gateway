@@ -30,3 +30,31 @@ def test_fullwidth_digits_are_normalised_before_matching() -> None:
 def test_nul_bytes_do_not_shift_spans() -> None:
     prompt = "a\x00b email nimal@company.lk"
     assert found(prompt)["EMAIL_ADDRESS"] == "nimal@company.lk"
+
+
+KEY_BODY = (
+    "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun\n"
+    "VTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u+qKhbwKfBstIs+bMY2Zkp18gnTxK\n"
+    "q2eXq4pN9oA7m3cG1fYdLkZ0Q8vR6sT2uWxYzA1bC3dE5fG7hI9jK0lM2nO4pQ6r\n"
+)
+
+
+@pytest.mark.parametrize("kind, entity_type", [
+    ("RSA PRIVATE KEY", "PEM_PRIVATE_KEY"),
+    ("PRIVATE KEY", "PEM_PRIVATE_KEY"),
+    ("ENCRYPTED PRIVATE KEY", "PEM_PRIVATE_KEY"),
+    ("OPENSSH PRIVATE KEY", "SSH_PRIVATE_KEY"),
+    ("PGP PRIVATE KEY BLOCK", "PGP_PRIVATE_KEY"),
+])
+def test_private_key_finding_covers_the_whole_block(kind: str, entity_type: str) -> None:
+    block = f"-----BEGIN {kind}-----\n{KEY_BODY}-----END {kind}-----"
+    prompt = f"Why does this fail?\n{block}\nThanks"
+    spans = found(prompt)
+
+    assert spans[entity_type] == block
+    assert "HIGH_ENTROPY_SECRET" not in spans
+
+
+def test_truncated_private_key_is_covered_to_the_end() -> None:
+    prompt = f"-----BEGIN RSA PRIVATE KEY-----\n{KEY_BODY}"
+    assert found(prompt)["PEM_PRIVATE_KEY"] == prompt
