@@ -2042,3 +2042,18 @@ pre {
 .risk-factors strong {
   color: #b42318;
 }
+
+.reply-masked-note {
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border-left: 3px solid #d97706;
+  border-radius: 0.3rem;
+  background: #fff8eb;
+  color: #7a4b00;
+  font-size: 0.82rem;
+}
+
+.gateway-dark .reply-masked-note {
+  background: #2b2111;
+  color: #f5c36b;
+}
