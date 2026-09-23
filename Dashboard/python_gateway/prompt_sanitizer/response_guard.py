@@ -22,9 +22,9 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from detection_engine.models.response import DetectionResponse
 from pydantic import BaseModel
 
-from detection_engine.models.response import DetectionResponse
 from prompt_sanitizer.sanitizer import SanitizedPrompt
 
 # Context-only findings stay readable in replies ("the Colombo office").

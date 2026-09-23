@@ -1,0 +1,18 @@
+{
+  "entity_weights": {
+    "CREDIT_CARD_NUMBER": 70,
+    "BANK_ACCOUNT_NUMBER": 60,
+    "PRIVATE_SOURCE_CODE": 60
+  },
+  "category_defaults": {
+    "FINANCIAL": 50
+  },
+  "thresholds": {
+    "medium": 25,
+    "high": 50,
+    "critical": 80
+  },
+  "category_combination_bonus": 10,
+  "repeat_attempt_points": 10,
+  "repeat_attempt_cap": 30
+}

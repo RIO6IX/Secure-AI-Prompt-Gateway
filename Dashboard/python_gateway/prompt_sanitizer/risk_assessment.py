@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel
-
 from detection_engine.models.entities import Category
 from detection_engine.models.response import DetectedEntity, DetectionResponse
+from pydantic import BaseModel
+
+from prompt_sanitizer.risk_policy import RiskPolicy
 
 # Points an entity type contributes to the prompt risk score at full
 # confidence. Credentials weigh most because a leaked secret is directly
@@ -106,18 +107,25 @@ class RiskAssessment(BaseModel):
     summary: str
 
 
-def level_for(score: int) -> RiskLevel:
-    if score >= CRITICAL_THRESHOLD:
+def level_for(score: int, policy: RiskPolicy | None = None) -> RiskLevel:
+    thresholds = (policy or RiskPolicy()).thresholds
+    if score >= thresholds.critical:
         return RiskLevel.CRITICAL
-    if score >= HIGH_THRESHOLD:
+    if score >= thresholds.high:
         return RiskLevel.HIGH
-    if score >= MEDIUM_THRESHOLD:
+    if score >= thresholds.medium:
         return RiskLevel.MEDIUM
     return RiskLevel.LOW
 
 
+
 class RiskAssessor:
     """Component 02: turns detection findings into one explainable prompt risk score."""
+
+    def __init__(self, policy: RiskPolicy | None = None) -> None:
+        # A loaded policy file only overrides what it names; everything else
+        # keeps the built-in defaults.
+        self.policy = (policy or RiskPolicy()).merged_with(ENTITY_WEIGHTS, CATEGORY_DEFAULT_WEIGHTS)
 
     def assess(self, detection: DetectionResponse, recent_blocked: int = 0) -> RiskAssessment:
         """Score a prompt.
@@ -146,7 +154,7 @@ class RiskAssessor:
         factors: list[RiskFactor] = []
         for entity_type, group in by_type.items():
             best = max(group, key=lambda item: item.confidence)
-            weight = ENTITY_WEIGHTS.get(entity_type, CATEGORY_DEFAULT_WEIGHTS[best.category])
+            weight = self.policy.entity_weights.get(entity_type, self.policy.category_defaults[best.category])
             points = round(weight * best.confidence)
             repeats = len(group) - 1
             if repeats:
@@ -159,7 +167,7 @@ class RiskAssessor:
 
         categories = {entity.category for entity in entities}
         if len(categories) > 1:
-            bonus = CATEGORY_COMBINATION_BONUS * (len(categories) - 1)
+            bonus = self.policy.category_combination_bonus * (len(categories) - 1)
             names = ", ".join(sorted(category.value.lower() for category in categories))
             factors.append(RiskFactor(
                 entity_type="CATEGORY_COMBINATION",
@@ -172,13 +180,13 @@ class RiskAssessor:
             factors.append(RiskFactor(
                 entity_type="REPEATED_ATTEMPTS",
                 category=sorted(categories)[0],
-                points=min(REPEAT_ATTEMPT_CAP, REPEAT_ATTEMPT_POINTS * recent_blocked),
+                points=min(self.policy.repeat_attempt_cap, self.policy.repeat_attempt_points * recent_blocked),
                 reason=f"{recent_blocked} blocked prompt(s) from this user in the last hour",
             ))
 
         factors.sort(key=lambda factor: factor.points, reverse=True)
         score = min(100, sum(factor.points for factor in factors))
-        level = level_for(score)
+        level = level_for(score, self.policy)
         action = RecommendedAction.BLOCK if level == RiskLevel.CRITICAL else RecommendedAction.SANITIZE
         top = factors[0].reason
         return RiskAssessment(

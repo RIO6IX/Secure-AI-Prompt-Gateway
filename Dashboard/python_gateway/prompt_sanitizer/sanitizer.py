@@ -5,10 +5,9 @@ import hmac
 import re
 import secrets
 
-from pydantic import BaseModel
-
 from detection_engine.models.entities import Category
 from detection_engine.models.response import DetectionResponse
+from pydantic import BaseModel
 
 # Categories whose original values may be put back into the model's reply for
 # the user who sent them. Credentials and card data are never restored: the

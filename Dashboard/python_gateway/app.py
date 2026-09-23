@@ -30,7 +30,7 @@ from detection_engine.core.logging import configure_logging
 from detection_engine.models.request import DetectRequest
 from detection_engine.models.response import DetectedEntity, DetectionResponse
 from detection_engine.services.health_service import health_payload
-from prompt_sanitizer import ConversationAccessError, ConversationStore, PromptSanitizer, PseudonymMap, ResponseGuard, RecommendedAction, RiskAssessment, RiskAssessor, SanitizedPrompt
+from prompt_sanitizer import ConversationAccessError, load_risk_policy, ConversationStore, PromptSanitizer, PseudonymMap, ResponseGuard, RecommendedAction, RiskAssessment, RiskAssessor, SanitizedPrompt
 from security_policy import PolicyAction, PolicyDecision, PolicyEngine, PolicyInput, UserContext
 
 
@@ -63,6 +63,8 @@ PROMPT_RATE_LIMIT_PER_MINUTE = int(os.getenv("PROMPT_RATE_LIMIT_PER_MINUTE", "60
 # Sensitive data the model generates itself is masked in both modes.
 REPLY_PII_MODE = os.getenv("REPLY_PII_MODE", "mask").strip().lower()
 CONVERSATION_TTL_MINUTES = int(os.getenv("CONVERSATION_TTL_MINUTES", "30"))
+# Optional JSON file overriding risk weights/thresholds (see prompt_sanitizer/risk_policy.py).
+RISK_POLICY_FILE = os.getenv("RISK_POLICY_FILE", "").strip() or None
 CONVERSATION_MAX_MESSAGES = int(os.getenv("CONVERSATION_MAX_MESSAGES", "20"))
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
@@ -465,7 +467,7 @@ def get_policy_engine() -> PolicyEngine:
 
 
 PROMPT_SANITIZER = PromptSanitizer()
-RISK_ASSESSOR = RiskAssessor()
+RISK_ASSESSOR = RiskAssessor(load_risk_policy(RISK_POLICY_FILE))
 CONVERSATIONS = ConversationStore(ttl_seconds=CONVERSATION_TTL_MINUTES * 60, max_messages=CONVERSATION_MAX_MESSAGES)
 RESPONSE_GUARD = ResponseGuard(lambda text: get_detection_engine().detect(DetectRequest(prompt=text)))
 ACTION_STRICTNESS = {"ALLOW": 0, "SANITIZE": 1, "BLOCK": 2}
