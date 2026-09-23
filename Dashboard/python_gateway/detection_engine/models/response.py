@@ -30,6 +30,7 @@ class DetectionResponse(BaseModel):
     detected_entities: list[DetectedEntity]
     category_summary: dict[Category, int]
     engine_version: str
+    warnings: list[str] = []
 
 
 class BatchDetectionResponse(BaseModel):

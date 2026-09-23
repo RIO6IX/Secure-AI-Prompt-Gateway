@@ -104,6 +104,7 @@ class SensitiveDataDetectionEngine:
             detected_entities=entities,
             category_summary=summary,
             engine_version=ENGINE_VERSION,
+            warnings=context.warnings,
         )
         metrics.record_detection(response)
         LOGGER.info(
