@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from detection_engine.models.entities import DetectionCandidate, DetectionMethod, ValidationStatus
-from detection_engine.rules.allowlists import is_placeholder
+from detection_engine.rules.allowlists import NEGATIVE_CONTEXT, is_placeholder
 from detection_engine.rules.context_keywords import POSITIVE_CONTEXT
+from detection_engine.rules.keyword_match import keywords_in
+
+
+VALIDATED_CONFIDENCE_FLOOR = 0.50
 
 
 def clamp(value: float) -> float:
@@ -16,9 +20,8 @@ def context_window(text: str, start: int, end: int, radius: int = 80) -> str:
 def enhance_candidate(candidate: DetectionCandidate, text: str) -> DetectionCandidate:
     window = context_window(text, candidate.start, candidate.end)
     category_words = POSITIVE_CONTEXT.get(candidate.category.value, set())
-    positive = [word for word in category_words if word in window]
-    negative = ["example", "sample", "fake", "dummy", "mock", "placeholder", "test", "documentation", "tutorial"]
-    negative_hits = [word for word in negative if word in window]
+    positive = sorted(keywords_in(window, category_words))
+    negative_hits = keywords_in(window, NEGATIVE_CONTEXT)
 
     validation_adjustment = 0.0
     if candidate.validation_status in {ValidationStatus.FORMAT_VALID, ValidationStatus.CHECKSUM_VALID, ValidationStatus.CONTEXT_CONFIRMED}:
@@ -31,6 +34,11 @@ def enhance_candidate(candidate: DetectionCandidate, text: str) -> DetectionCand
     placeholder_penalty = 0.25 if is_placeholder(candidate.value) else 0.0
     corroboration = 0.05 if len(set(candidate.detection_methods)) > 1 else 0.0
     confidence = clamp(candidate.confidence + validation_adjustment + context_adjustment + corroboration - penalty - placeholder_penalty)
+    if candidate.validation_status in {ValidationStatus.CHECKSUM_VALID, ValidationStatus.FORMAT_VALID}:
+        # "test"/"example" nearby lowers confidence, but a value that passed a
+        # deterministic check is still reported: a Luhn-valid PAN must never
+        # silently fall under the reporting threshold.
+        confidence = max(confidence, VALIDATED_CONFIDENCE_FLOOR)
 
     methods = list(dict.fromkeys(candidate.detection_methods))
     context_bits: list[str] = []
