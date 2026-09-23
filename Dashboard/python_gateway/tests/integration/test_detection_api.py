@@ -288,3 +288,62 @@ def test_gateway_returns_clear_error_for_blank_prompt(tmp_path, monkeypatch) -> 
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "EMPTY_PROMPT"
+
+
+def register_admin(tmp_path, monkeypatch, email: str) -> dict[str, str]:
+    monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
+    gateway_app.init_db()
+    register = client.post(
+        "/auth/register",
+        json={"name": "Gateway Admin", "email": email, "password": "SecurePass123!"},
+    )
+    assert register.status_code == 201
+    return {"authorization": f"Bearer {register.json()['token']}"}
+
+
+def test_inspect_uses_detection_engine_and_token_identity(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "inspect.admin@example.com")
+
+    response = client.post(
+        "/inspect",
+        headers=headers,
+        json={
+            "actor": "someone.else@example.com",
+            "service": "ChatGPT Enterprise",
+            "prompt": "Connect with postgres://admin:hunter2@10.0.0.5:5432/prod please",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["actor"] == "inspect.admin@example.com"
+    assert body["status"] == "Blocked"
+    assert body["finding"] == "Database Connection String"
+    assert "hunter2" not in body["maskedOutput"]
+    assert body.get("originalPrompt") is None
+
+
+def test_gateway_writes_one_audit_record_per_prompt(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "one.record@example.com")
+
+    for prompt in ("What is a hash function?", "email me at nimal@company.lk"):
+        response = client.post("/gateway/chat", headers=headers, json={"prompt": prompt, "forward_to_ollama": False})
+        assert response.status_code == 200
+
+    summary = client.get("/audit", headers=headers).json()
+    assert summary["totals"]["total"] == 2
+    assert summary["totals"]["sensitive"] == 1
+
+
+def test_remote_audit_outage_does_not_fail_the_request(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "remote.outage@example.com")
+    monkeypatch.setattr(gateway_app, "REMOTE_AUDIT_API_URL", "http://127.0.0.1:9/unreachable")
+
+    response = client.post(
+        "/inspect",
+        headers=headers,
+        json={"service": "ChatGPT Enterprise", "prompt": "hello there"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["remoteId"] is None

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import hashlib
 import base64
+import hashlib
 import hmac
 import json
+import logging
 import os
-import re
 import sqlite3
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -23,11 +25,12 @@ from detection_engine.api.routes import router as detection_router
 from detection_engine.api.routes import root_metrics, root_ready
 from detection_engine.core.exceptions import DetectionError
 from detection_engine.core.logging import configure_logging
-from detection_engine.engine.masking import mask_value as detection_mask_value
 from detection_engine.models.request import DetectRequest
-from detection_engine.models.response import DetectionResponse
+from detection_engine.models.response import DetectedEntity, DetectionResponse
 from detection_engine.services.health_service import health_payload
 
+
+LOGGER = logging.getLogger("secure_gateway")
 
 RiskLevel = Literal["Low", "Medium", "High", "Critical"]
 Role = Literal["admin", "auditor", "user"]
@@ -55,10 +58,19 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    configure_logging()
+    validate_runtime_config()
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="Secure AI Prompt Gateway Python Service",
     version="0.2.0",
     description="Python gateway service that masks sensitive prompt data and writes real audit events.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -104,7 +116,6 @@ class AuthOut(BaseModel):
 
 
 class PromptInspectionIn(BaseModel):
-    actor: str = Field(..., examples=["john.doe@company.com"])
     department: str = "Unknown"
     service: str = Field(..., examples=["ChatGPT Enterprise"])
     prompt: str = Field(..., max_length=MAX_PROMPT_CHARS)
@@ -314,17 +325,6 @@ def clear_failed_logins(key: str) -> None:
     login_failures.pop(key, None)
 
 
-DETECTORS: list[tuple[str, str, re.Pattern[str], str]] = [
-    ("Credentials & Secrets", "OpenAI/API Key", re.compile(r"\b(sk-(?:proj-)?[A-Za-z0-9_-]{16,})\b"), "Block credentials and tokens"),
-    ("Credentials & Secrets", "AWS Access Key", re.compile(r"\b(AKIA[0-9A-Z]{16})\b"), "Block credentials and tokens"),
-    ("Credentials & Secrets", "Password", re.compile(r"(?i)\b(?:password|passwd|pwd)\s*(?:is|:|=)\s*[\"']?([^\s,;\"']{1,128})[\"']?"), "Block credentials and tokens"),
-    ("Financial (PCI)", "Credit Card Number", re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "Mask PCI data before AI submission"),
-    ("PII", "Email Address", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "Mask PII before AI submission"),
-    ("PII", "Phone Number", re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b"), "Mask PII before AI submission"),
-    ("Source Code / IP", "Private Source Code", re.compile(r"(?s)\b(function|class|def|const|let|var)\b.{20,}"), "Warn on source code or internal URLs"),
-]
-
-
 def connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH, timeout=10)
@@ -386,50 +386,67 @@ def auth_response(row: sqlite3.Row) -> AuthOut:
     return AuthOut(token=token, user=user)
 
 
-def mask_value(match: re.Match[str]) -> str:
-    value = match.group(0)
-    if len(value) <= 8:
-      return "****"
-    return f"{value[:4]}{'*' * max(4, len(value) - 8)}{value[-4:]}"
+POLICY_BY_CATEGORY = {
+    "CREDENTIAL": "Block credentials and tokens",
+    "FINANCIAL": "Mask PCI data before AI submission",
+    "PII": "Mask PII before AI submission",
+    "SOURCE_CODE": "Warn on source code or internal URLs",
+}
+RISK_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 
 
-def inspect_prompt(payload: PromptInspectionIn) -> AuditEventIn:
-    masked = payload.prompt
-    matches: list[tuple[str, str, str]] = []
+def primary_entity(detection: DetectionResponse) -> DetectedEntity:
+    """The finding that drives the audit record: highest risk, then confidence."""
+    return max(
+        detection.detected_entities,
+        key=lambda entity: (RISK_RANK[entity.risk_level.value], entity.confidence),
+    )
 
-    for category, finding, pattern, policy in DETECTORS:
-        if pattern.search(masked):
-            masked = pattern.sub(mask_value, masked)
-            matches.append((category, finding, policy))
 
-    if not matches:
-        category, finding, policy = "Clean", "No sensitive data detected", "Default prompt leakage policy"
-        risk: RiskLevel = "Low"
-        status = "Allowed"
-        action = "Prompt allowed"
-        score = 8
-    else:
-        category, finding, policy = matches[0]
-        secret_hit = category == "Credentials & Secrets"
-        risk = "High" if secret_hit else "Medium"
-        status = "Blocked" if secret_hit else "Sanitized"
-        action = "Prompt blocked" if secret_hit else "Prompt sanitized"
-        score = 92 if secret_hit else 58
+def entity_label(entity_type: str) -> str:
+    return entity_type.replace("_", " ").title()
 
+
+def inspect_prompt(payload: PromptInspectionIn, actor: str) -> AuditEventIn:
+    detection = get_detection_engine().detect(DetectRequest(prompt=payload.prompt))
+    masked = redact_from_detection(payload.prompt, detection)
+    prompt_hash = hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest()
+
+    if not detection.contains_sensitive_data:
+        return AuditEventIn(
+            actor=actor,
+            department=payload.department,
+            service=payload.service,
+            action="Prompt allowed",
+            status="Allowed",
+            risk="Low",
+            riskScore=0,
+            finding="No sensitive data detected",
+            category="Clean",
+            policyRule="Default prompt leakage policy",
+            maskedOutput=masked,
+            promptHash=prompt_hash,
+            source=payload.source,
+        )
+
+    primary = primary_entity(detection)
+    credential_hit = any(
+        entity.category.value == "CREDENTIAL" and entity.risk_level.value in {"HIGH", "CRITICAL"}
+        for entity in detection.detected_entities
+    )
     return AuditEventIn(
-        actor=payload.actor,
+        actor=actor,
         department=payload.department,
         service=payload.service,
-        action=action,
-        status=status,
-        risk=risk,
-        riskScore=score,
-        finding=finding,
-        category=category,
-        policyRule=policy,
+        action="Prompt blocked" if credential_hit else "Prompt sanitized",
+        status="Blocked" if credential_hit else "Sanitized",
+        risk=title_case_risk(detection.overall_risk.value),
+        riskScore=int(round(detection.risk_score * 100)),
+        finding=entity_label(primary.entity_type),
+        category=primary.category.value,
+        policyRule=POLICY_BY_CATEGORY.get(primary.category.value, "Default prompt leakage policy"),
         maskedOutput=masked,
-        originalPrompt=payload.prompt,
-        promptHash=hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest(),
+        promptHash=prompt_hash,
         source=payload.source,
     )
 
@@ -461,13 +478,13 @@ def harden_audit_event(event: AuditEventIn) -> AuditEventIn:
 
     updates: dict[str, object] = {"maskedOutput": sanitized_output}
     if sanitized_output != event.maskedOutput:
-        first = detection.detected_entities[0]
+        primary = primary_entity(detection)
         updates.update(
             {
                 "risk": title_case_risk(detection.overall_risk.value),
                 "riskScore": int(round(detection.risk_score * 100)),
-                "finding": first.entity_type.replace("_", " ").title(),
-                "category": first.category.value,
+                "finding": entity_label(primary.entity_type),
+                "category": primary.category.value,
                 "policyRule": "Audit write boundary sanitization enforced",
             }
         )
@@ -573,47 +590,45 @@ async def call_ollama(sanitized_prompt: str) -> tuple[str, bool]:
         )
 
 
-def build_gateway_audit_events(
+def build_gateway_audit_event(
     payload: GatewayPromptIn,
     user: dict[str, str],
     detection: DetectionResponse,
     sanitized_prompt: str,
-    ollama_available: bool,
-) -> list[AuditEventIn]:
-    risk = title_case_risk(detection.overall_risk.value)
+    forwarded: bool,
+    model_available: bool,
+) -> AuditEventIn:
     finding = "No sensitive data detected"
     category = "Clean"
     if detection.detected_entities:
-        first = detection.detected_entities[0]
-        finding = first.entity_type.replace("_", " ").title()
-        category = first.category.value
-    score = int(round(detection.risk_score * 100))
-    prompt_hash = hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest()
-    base = {
-        "actor": user["email"],
-        "department": payload.department,
-        "service": payload.service,
-        "risk": risk,
-        "riskScore": score,
-        "finding": finding,
-        "category": category,
-        "policyRule": "Component 01 detection enforced; Component 02 and 03 extension points prepared",
-        "maskedOutput": sanitized_prompt,
-        "originalPrompt": None,
-        "promptHash": prompt_hash,
-        "source": payload.source,
-    }
+        primary = primary_entity(detection)
+        finding = entity_label(primary.entity_type)
+        category = primary.category.value
+
     if not detection.contains_sensitive_data:
-        return [AuditEventIn(action="Prompt analyzed", status="Allowed", **base)]
-    events = [
-        AuditEventIn(action="Sensitive data detected", status="Detected", **base),
-        AuditEventIn(action="Prompt sanitized", status="Sanitized", **base),
-    ]
-    if ollama_available:
-        events.append(AuditEventIn(action="Redacted and sent to local Ollama", status="Forwarded", **base))
+        action, status = "Prompt analyzed and allowed", "Allowed"
+    elif forwarded and model_available:
+        action, status = "Redacted and sent to local Ollama", "Sanitized"
+    elif forwarded:
+        action, status = "Redacted; Ollama unavailable", "Sanitized"
     else:
-        events.append(AuditEventIn(action="Ollama unavailable", status="Queued", **base))
-    return events
+        action, status = "Redacted; forwarding disabled", "Sanitized"
+
+    return AuditEventIn(
+        actor=user["email"],
+        department=payload.department,
+        service=payload.service,
+        action=action,
+        status=status,
+        risk=title_case_risk(detection.overall_risk.value),
+        riskScore=int(round(detection.risk_score * 100)),
+        finding=finding,
+        category=category,
+        policyRule="Component 01 detection enforced; Component 02 and 03 extension points prepared",
+        maskedOutput=sanitized_prompt,
+        promptHash=hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest(),
+        source=payload.source,
+    )
 
 
 async def write_remote(event: AuditEventIn) -> str | None:
@@ -623,15 +638,20 @@ async def write_remote(event: AuditEventIn) -> str | None:
     if REMOTE_AUDIT_BEARER_TOKEN:
         headers["authorization"] = f"Bearer {REMOTE_AUDIT_BEARER_TOKEN}"
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.post(
-            REMOTE_AUDIT_API_URL,
-            json=event.model_dump(),
-            headers=headers,
-        )
-        response.raise_for_status()
-        body = response.json()
-        return body.get("id")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                REMOTE_AUDIT_API_URL,
+                json=event.model_dump(exclude={"originalPrompt"}),
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json().get("id")
+    except (httpx.HTTPError, ValueError) as exc:
+        # The local SQLite record is authoritative; a SIEM outage must not
+        # turn into a failed prompt or a lost audit event.
+        LOGGER.warning("remote audit forwarding failed: %s", type(exc).__name__)
+        return None
 
 
 def write_local(event: AuditEventIn, remote_id: str | None) -> AuditEvent:
@@ -670,13 +690,6 @@ def write_local(event: AuditEventIn, remote_id: str | None) -> AuditEvent:
             ),
         )
     return audit
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    configure_logging()
-    validate_runtime_config()
-    init_db()
 
 
 @app.get("/health")
@@ -719,16 +732,37 @@ def policies(authorization: str | None = Header(default=None)) -> dict[str, obje
 
 
 @app.get("/integrations")
-def integrations(authorization: str | None = Header(default=None)) -> dict[str, object]:
+async def integrations(authorization: str | None = Header(default=None)) -> dict[str, object]:
     get_auth_user(authorization)
+    ollama_status = await ollama_model_status()
+    engine = get_detection_engine()
     return {
         "integrations": [
-            {"name": "ChatGPT Enterprise", "status": "Ready", "mode": "Prompt gateway"},
-            {"name": "Google Gemini", "status": "Ready", "mode": "Prompt gateway"},
-            {"name": "Microsoft Copilot", "status": "Ready", "mode": "Prompt gateway"},
-            {"name": "Browser Extension", "status": "Local backend", "mode": "JavaScript extension"},
+            {"name": f"Ollama ({OLLAMA_MODEL})", "status": ollama_status, "mode": f"Local model at {OLLAMA_BASE_URL}"},
+            {
+                "name": "Detection Engine NER",
+                "status": "Loaded" if engine.ner_available else "Regex only",
+                "mode": "spaCy named-entity recognition",
+            },
+            {
+                "name": "Remote Audit / SIEM",
+                "status": "Configured" if REMOTE_AUDIT_API_URL else "Not configured",
+                "mode": "Forwards masked audit events",
+            },
+            {"name": "SQLite Audit Store", "status": "Active", "mode": DB_PATH.name},
         ]
     }
+
+
+async def ollama_model_status() -> str:
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            response = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags")
+            response.raise_for_status()
+            models = {str(model.get("name", "")) for model in response.json().get("models", [])}
+    except (httpx.HTTPError, ValueError):
+        return "Offline"
+    return "Online" if OLLAMA_MODEL in models else "Model not pulled"
 
 
 @app.post("/auth/register", response_model=AuthOut, status_code=201)
@@ -864,7 +898,10 @@ async def inspect_and_log(
     init_db()
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin"})
-    event = inspect_prompt(payload)
+    try:
+        event = inspect_prompt(payload, current_user["email"])
+    except DetectionError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
     remote_id = await write_remote(event)
     return write_local(event, remote_id)
 
@@ -890,8 +927,10 @@ async def gateway_chat(
         "Sensitive data was analyzed. Forwarding is disabled for this request.",
         False,
     )
-    audit_inputs = build_gateway_audit_events(payload, current_user, detection, sanitized_prompt, ollama_available)
-    audit_events = [write_local(event, None) for event in audit_inputs]
+    audit_event = write_local(
+        build_gateway_audit_event(payload, current_user, detection, sanitized_prompt, should_forward, ollama_available),
+        None,
+    )
 
     if detection.contains_sensitive_data and ollama_available:
         action = "Detected sensitive data -> redacted -> sent to local Ollama safely."
@@ -925,7 +964,7 @@ async def gateway_chat(
             )
             for entity in detection.detected_entities
         ],
-        auditEvents=[event.model_dump() for event in audit_events],
+        auditEvents=[audit_event.model_dump(exclude={"originalPrompt"})],
         ollamaModel=OLLAMA_MODEL,
         ollamaAvailable=ollama_available,
         componentExtensionPoints={
@@ -1007,6 +1046,7 @@ def audit_summary(
               COUNT(*) AS total,
               SUM(CASE WHEN status = 'Blocked' THEN 1 ELSE 0 END) AS blocked,
               SUM(CASE WHEN risk IN ('High', 'Critical') THEN 1 ELSE 0 END) AS highRisk,
+              SUM(CASE WHEN category != 'Clean' THEN 1 ELSE 0 END) AS sensitive,
               COUNT(DISTINCT actor) AS activeUsers,
               AVG(risk_score) AS averageRiskScore
             FROM audit_events
