@@ -1,8 +1,8 @@
 # Secure AI Prompt Gateway: Browser Extension
 
 Chrome/Edge (Manifest V3) extension that checks prompts on ChatGPT, Gemini,
-Copilot, Claude and Perplexity with the local gateway **before** they are
-sent.
+Copilot (consumer and Microsoft 365), Claude, Perplexity, DeepSeek, Mistral
+Le Chat and Poe with the local gateway **before** they are sent.
 
 ## How it works
 
@@ -48,3 +48,22 @@ npm run check   # syntax check of all extension scripts
 
 The toolbar badge shows `!` on the tab where values were replaced and
 `X` where a prompt was blocked.
+
+## Paste warnings
+
+Pasting sensitive text into a supported site shows a warning right away,
+listing what was found and saying it will be replaced or blocked on send.
+The check uses detection only (`/api/v1/detect`), so pastes create no
+audit records. The real, audited check still happens when you send.
+
+## Publishing (Chrome Web Store / Edge Add-ons)
+
+```
+npm run icons     # regenerate icons/ (Pillow)
+npm run package   # dist/secure-ai-prompt-gateway-<version>.zip
+```
+
+The package contains only runtime files. It fails if `manifest.json`
+references a file that doesn't exist. Upload the zip together with the
+privacy policy in [PRIVACY.md](PRIVACY.md); the Store requires one for
+extensions that handle user data.
