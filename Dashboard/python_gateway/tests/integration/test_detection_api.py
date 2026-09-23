@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 import app as gateway_app
@@ -5,6 +6,13 @@ from app import app
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def reset_prompt_rate_limit():
+    gateway_app.prompt_rate_limiter.reset()
+    yield
+    gateway_app.prompt_rate_limiter.reset()
 
 
 def test_detect_endpoint() -> None:
@@ -486,3 +494,18 @@ def test_repeated_blocked_attempts_escalate_the_next_sensitive_prompt(tmp_path, 
     assert factors["REPEATED_ATTEMPTS"] == 20
     clean = client.post("/api/v1/sanitize", headers=headers, json={"prompt": "What is a hash?"}).json()
     assert clean["decision"] == "ALLOW"
+
+
+def test_prompt_endpoints_are_rate_limited_per_user(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "rate.limited@example.com")
+    monkeypatch.setattr(gateway_app, "prompt_rate_limiter", gateway_app.SlidingWindowLimiter(3, 60))
+
+    statuses = [
+        client.post("/api/v1/sanitize", headers=headers, json={"prompt": "hello"}).status_code
+        for _ in range(4)
+    ]
+
+    assert statuses == [200, 200, 200, 429]
+    limited = client.post("/gateway/chat", headers=headers, json={"prompt": "hi", "forward_to_ollama": False})
+    assert limited.status_code == 429
+    assert int(limited.headers["retry-after"]) >= 1

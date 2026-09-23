@@ -7,7 +7,9 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
+from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -55,6 +57,7 @@ PASSWORD_PBKDF2_ITERATIONS = int(os.getenv("PASSWORD_PBKDF2_ITERATIONS", "310000
 LOGIN_MAX_ATTEMPTS = int(os.getenv("LOGIN_MAX_ATTEMPTS", "5"))
 LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_WINDOW_SECONDS", "900"))
 RISK_HISTORY_MINUTES = int(os.getenv("RISK_HISTORY_MINUTES", "60"))
+PROMPT_RATE_LIMIT_PER_MINUTE = int(os.getenv("PROMPT_RATE_LIMIT_PER_MINUTE", "60"))
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
@@ -480,6 +483,43 @@ class PromptVerdict(BaseModel):
         if self.blocked and self.policy.action != PolicyAction.BLOCK:
             return f"RISK-{self.assessment.level.value}: Component 02 risk score {self.assessment.score}/100"
         return f"{self.policy.rule_id}: {self.policy.rule_name}"
+
+
+class SlidingWindowLimiter:
+    """Per-key request limit over a sliding time window (thread-safe).
+
+    Prompt endpoints run detection and NER on every call; without a limit one
+    client can tie up the workers or script thousands of variations to map
+    out what the detector misses.
+    """
+
+    def __init__(self, limit: int, window_seconds: float) -> None:
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self._hits: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def check(self, key: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            hits = self._hits.setdefault(key, deque())
+            while hits and hits[0] <= now - self.window_seconds:
+                hits.popleft()
+            if len(hits) >= self.limit:
+                retry_after = max(1, int(hits[0] + self.window_seconds - now) + 1)
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many prompts in a short time. Wait a moment and try again.",
+                    headers={"retry-after": str(retry_after)},
+                )
+            hits.append(now)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._hits.clear()
+
+
+prompt_rate_limiter = SlidingWindowLimiter(PROMPT_RATE_LIMIT_PER_MINUTE, 60)
 
 
 def recent_blocked_count(actor: str) -> int:
@@ -983,6 +1023,7 @@ async def inspect_and_log(
     init_db()
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin"})
+    prompt_rate_limiter.check(current_user["email"])
     try:
         event = inspect_prompt(payload, current_user)
     except DetectionError as exc:
@@ -999,6 +1040,7 @@ async def gateway_chat(
     init_db()
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin", "user"})
+    prompt_rate_limiter.check(current_user["email"])
 
     try:
         verdict, vault = evaluate_prompt(
@@ -1092,6 +1134,7 @@ async def sanitize_prompt(
     init_db()
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin", "user"})
+    prompt_rate_limiter.check(current_user["email"])
     try:
         verdict, _ = evaluate_prompt(payload.prompt, current_user, payload.service, payload.department, True)
     except DetectionError as exc:
