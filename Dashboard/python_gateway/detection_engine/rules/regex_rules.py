@@ -21,6 +21,7 @@ class RegexRule:
 
 REGEX_RULES: tuple[RegexRule, ...] = (
     RegexRule("aws_access_key_id", "AWS_ACCESS_KEY", Category.CREDENTIAL, re.compile(r"\bAKIA[0-9A-Z]{16}\b"), 0.90, RiskLevel.CRITICAL, ("aws", "access key", "secret"), "secret_format"),
+    RegexRule("openai_api_key", "OPENAI_API_KEY", Category.CREDENTIAL, re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,200}\b"), 0.90, RiskLevel.CRITICAL, ("openai", "api key"), "secret_format"),
     RegexRule("github_token", "GITHUB_TOKEN", Category.CREDENTIAL, re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,255}\b"), 0.92, RiskLevel.CRITICAL, ("github", "token"), "secret_format"),
     RegexRule("gitlab_token", "GITLAB_TOKEN", Category.CREDENTIAL, re.compile(r"\bglpat-[A-Za-z0-9_-]{20,255}\b"), 0.92, RiskLevel.CRITICAL, ("gitlab", "token"), "secret_format"),
     RegexRule("google_api_key", "GOOGLE_API_KEY", Category.CREDENTIAL, re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"), 0.92, RiskLevel.CRITICAL, ("google", "api key"), "secret_format"),
