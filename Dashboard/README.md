@@ -14,6 +14,8 @@ Code lives in `python_gateway/prompt_sanitizer/`.
 
 - **Sanitizer** (`sanitizer.py`): replaces each detected span with a typed, numbered placeholder such as `[EMAIL_ADDRESS_1]` or `[CREDIT_CARD_NUMBER_1]`. The same value always gets the same placeholder, so the model can still follow references. The placeholder-to-value map stays in memory for the request only. PII placeholders in the model's reply are restored for the user; credentials and card data never are. Low-risk place and company names are left in place, so ordinary questions stay readable.
 - **Risk assessor** (`risk_assessment.py`): gives each entity type a weight (private key 80, cloud or API key 60, card 50, password 50, NIC 30, email 15, phone 10, location 5, and so on). The weight is scaled by detection confidence, with a smaller add-on for repeats and +10 for each extra data category in the same prompt. The score is capped at 100: LOW < 25 ≤ MEDIUM < 50 ≤ HIGH < 80 ≤ CRITICAL. The assessor recommends ALLOW, SANITIZE or BLOCK and lists the factors behind the score.
+- **Repeated attempts**: each prompt from the same user that was blocked in the last `RISK_HISTORY_MINUTES` adds 10 points to their next *sensitive* prompt, up to +30. This catches someone trying variations of a secret until one gets through. Clean prompts are never penalised.
+- **Rate limit**: `/gateway/chat`, `/api/v1/sanitize` and `/inspect` accept `PROMPT_RATE_LIMIT_PER_MINUTE` requests per user. Beyond that they return HTTP 429 with a `Retry-After` header.
 - **Decision**: the gateway applies the stricter of the Component 02 risk recommendation and the Component 03 policy decision. A prompt that is only "sanitize" under each rule is still blocked when the combined risk is critical, for example a card, NIC, IBAN and contact details for one customer.
 
 The browser extension in `../browser-extension` uses `POST /api/v1/sanitize` to apply the same pipeline to ChatGPT, Gemini, Copilot, Claude and Perplexity. See its README for installation.
@@ -156,6 +158,8 @@ Copy `.env.example` to `.env` and pass it to uvicorn with `--env-file ../.env`. 
 - `ENABLE_NER=true`
 - `ENABLE_METRICS=true`
 - `SPACY_MODEL=en_core_web_sm`
+- `RISK_HISTORY_MINUTES=60` (recent blocked prompts raise the next sensitive prompt's risk)
+- `PROMPT_RATE_LIMIT_PER_MINUTE=60` (per-user limit on the prompt endpoints, HTTP 429 beyond it)
 - `NER_MAX_CHARS=20000` (NER coverage cap; regex, checksum and entropy rules always scan the whole prompt)
 
 ## Production Hardening Checklist
