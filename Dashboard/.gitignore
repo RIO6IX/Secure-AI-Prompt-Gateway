@@ -53,3 +53,6 @@ python_gateway/audit_logs.sqlite3
 # Electron packaging output
 /desktop-dist/
 /desktop-release/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
