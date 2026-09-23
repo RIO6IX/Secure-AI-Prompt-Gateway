@@ -21,7 +21,16 @@ class RegexRule:
 
 REGEX_RULES: tuple[RegexRule, ...] = (
     RegexRule("aws_access_key_id", "AWS_ACCESS_KEY", Category.CREDENTIAL, re.compile(r"\bAKIA[0-9A-Z]{16}\b"), 0.90, RiskLevel.CRITICAL, ("aws", "access key", "secret"), "secret_format"),
-    RegexRule("openai_api_key", "OPENAI_API_KEY", Category.CREDENTIAL, re.compile(r"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,200}\b"), 0.90, RiskLevel.CRITICAL, ("openai", "api key"), "secret_format"),
+    RegexRule("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY", Category.CREDENTIAL, re.compile(r"(?i)\b(?:aws_?secret_?access_?key|aws_?secret_?key|secret_?access_?key)[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9/+=]{40})(?![A-Za-z0-9/+=])"), 0.92, RiskLevel.CRITICAL, ("aws", "secret"), None),
+    RegexRule("anthropic_api_key", "ANTHROPIC_API_KEY", Category.CREDENTIAL, re.compile(r"\bsk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{20,200}\b"), 0.95, RiskLevel.CRITICAL, ("anthropic", "claude", "api key"), "secret_format"),
+    RegexRule("openai_api_key", "OPENAI_API_KEY", Category.CREDENTIAL, re.compile(r"\bsk-(?!ant-)(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,200}\b"), 0.90, RiskLevel.CRITICAL, ("openai", "api key"), "secret_format"),
+    RegexRule("huggingface_token", "HUGGINGFACE_TOKEN", Category.CREDENTIAL, re.compile(r"\bhf_[A-Za-z0-9]{30,40}\b"), 0.90, RiskLevel.CRITICAL, ("hugging face", "huggingface", "token"), "secret_format"),
+    RegexRule("azure_storage_account_key", "AZURE_STORAGE_KEY", Category.CREDENTIAL, re.compile(r"(?i)\bAccountKey=([A-Za-z0-9+/]{86}==)"), 0.95, RiskLevel.CRITICAL, ("azure", "storage", "connection"), None),
+    RegexRule("gcp_service_account_key", "GCP_SERVICE_ACCOUNT_KEY", Category.CREDENTIAL, re.compile(r"\"private_key_id\"\s*:\s*\"([a-f0-9]{40})\""), 0.92, RiskLevel.CRITICAL, ("service_account", "gcp", "google cloud"), None),
+    RegexRule("sendgrid_api_key", "SENDGRID_API_KEY", Category.CREDENTIAL, re.compile(r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b"), 0.95, RiskLevel.CRITICAL, ("sendgrid", "email"), "secret_format"),
+    RegexRule("npm_access_token", "NPM_TOKEN", Category.CREDENTIAL, re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"), 0.93, RiskLevel.CRITICAL, ("npm", "registry", "token"), "secret_format"),
+    RegexRule("slack_webhook_url", "SLACK_WEBHOOK", Category.CREDENTIAL, re.compile(r"https://hooks\.slack\.com/(?:services|workflows)/[A-Za-z0-9/_-]{20,120}"), 0.93, RiskLevel.CRITICAL, ("slack", "webhook"), None),
+    RegexRule("telegram_bot_token", "TELEGRAM_BOT_TOKEN", Category.CREDENTIAL, re.compile(r"\b\d{8,10}:AA[A-Za-z0-9_-]{33}\b"), 0.90, RiskLevel.CRITICAL, ("telegram", "bot"), None),
     RegexRule("github_token", "GITHUB_TOKEN", Category.CREDENTIAL, re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,255}\b"), 0.92, RiskLevel.CRITICAL, ("github", "token"), "secret_format"),
     RegexRule("gitlab_token", "GITLAB_TOKEN", Category.CREDENTIAL, re.compile(r"\bglpat-[A-Za-z0-9_-]{20,255}\b"), 0.92, RiskLevel.CRITICAL, ("gitlab", "token"), "secret_format"),
     RegexRule("google_api_key", "GOOGLE_API_KEY", Category.CREDENTIAL, re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"), 0.92, RiskLevel.CRITICAL, ("google", "api key"), "secret_format"),
