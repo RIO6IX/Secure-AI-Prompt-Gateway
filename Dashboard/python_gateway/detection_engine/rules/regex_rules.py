@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from detection_engine.models.entities import Category, RiskLevel
+from detection_engine.rules.sri_lankan_names import SRI_LANKAN_NAME_PATTERN
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,7 @@ REGEX_RULES: tuple[RegexRule, ...] = (
     RegexRule("url_with_credentials", "URL_WITH_CREDENTIALS", Category.PII, re.compile(r"(?i)\bhttps?://[A-Za-z0-9._%+-]{1,64}:[^@\s]{1,128}@[^\s/$.?#].[^\s]{1,200}"), 0.90, RiskLevel.CRITICAL, ("url", "credentials"), None),
     RegexRule("sri_lankan_old_nic", "SRI_LANKAN_NIC", Category.PII, re.compile(r"\b\d{9}[VXvx]\b"), 0.55, RiskLevel.MEDIUM, ("nic", "identity", "national identity card"), "nic"),
     RegexRule("sri_lankan_new_nic", "SRI_LANKAN_NIC", Category.PII, re.compile(r"\b\d{12}\b"), 0.42, RiskLevel.LOW, ("nic", "identity", "national identity card"), "nic"),
+    RegexRule("sri_lankan_name", "PERSON_NAME", Category.PII, re.compile(SRI_LANKAN_NAME_PATTERN), 0.70, RiskLevel.MEDIUM, ("name", "customer", "employee"), None),
     RegexRule("honorific_name", "PERSON_NAME", Category.PII, re.compile(HONORIFIC_NAME_PATTERN), 0.72, RiskLevel.MEDIUM, ("name",), None),
     RegexRule("street_address", "STREET_ADDRESS", Category.PII, re.compile(STREET_ADDRESS_PATTERN), 0.78, RiskLevel.MEDIUM, ("address", "ship", "deliver", "live"), None),
     RegexRule("bank_account_number", "BANK_ACCOUNT_NUMBER", Category.FINANCIAL, re.compile(r"(?i)\b(?:bank\s+)?(?:account|acct|acc|a/c)\.?\s*(?:no\.?|number|num|#)?\s*(?:is|:)?\s*(\d(?:[ -]?\d){7,17})\b"), 0.82, RiskLevel.HIGH, ("bank", "account", "branch"), None),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 
 from detection_engine.core.config import settings
@@ -27,6 +28,10 @@ SRI_LANKAN_PLACES = frozenset({
     "hikkaduwa", "ella", "dambulla", "sigiriya", "chilaw", "kalmunai", "horana", "wattala",
     "ja-ela", "kelaniya", "nugegoda", "battaramulla", "malabe", "homagama", "piliyandala",
 })
+
+STREET_WORDS = r"(?:Mawatha|Road|Rd|Street|St|Lane|Avenue|Ave|Place|Drive|Veediya|Para|Terrace|Gardens)"
+STREET_WORD_RE = re.compile(rf"\b{STREET_WORDS}\.?$")
+STREET_FOLLOWS_RE = re.compile(rf"\s+{STREET_WORDS}\b")
 
 LABEL_MAPPING = {
     "PERSON": ("PERSON_NAME", 0.60),
@@ -118,6 +123,14 @@ class PiiDetector(BaseDetector):
                     continue
                 # Personal names do not contain digits; "Zk3qP9rT..." is a token.
                 if entity.label_ == "PERSON" and any(char.isdigit() for char in entity.text):
+                    continue
+                # Streets are often named after people ("Fernando Mawatha",
+                # "Galle Road"); a PERSON hit ending in or followed by a street
+                # word is a street name.
+                if entity.label_ == "PERSON" and (
+                    STREET_WORD_RE.search(entity.text)
+                    or STREET_FOLLOWS_RE.match(doc.text, entity.end_char)
+                ):
                     continue
                 label = entity.label_
                 if label == "PERSON" and entity.text.lower() in SRI_LANKAN_PLACES:
