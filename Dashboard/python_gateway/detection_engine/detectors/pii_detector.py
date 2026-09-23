@@ -44,7 +44,9 @@ class PiiDetector(BaseDetector):
         for entity in doc.ents:
             if entity.label_ not in mapping:
                 continue
-            if entity.label_ == "ORG" and entity.text.isupper() and len(entity.text) <= 5:
+            # The small spaCy model tags shouted words ("URGENT", "DATABASE") and
+            # short acronyms as organisations; those are noise, not PII.
+            if entity.label_ == "ORG" and entity.text.isupper() and (len(entity.text) <= 5 or " " not in entity.text):
                 continue
             entity_type, confidence = mapping[entity.label_]
             findings.append(DetectionCandidate(
