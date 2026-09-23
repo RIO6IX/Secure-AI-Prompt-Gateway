@@ -6,7 +6,17 @@ Local company-style system for inspecting employee prompts before they are sent 
 
 This repository includes a production-style detection backend that identifies, classifies, validates, scores, and returns masked previews for sensitive data in prompts. The engine detects credentials, API keys, passwords, PII, financial identifiers, source-code exposure, and high-entropy secrets using layered regex rules, validators, context checks, and optional NLP support.
 
-The implementation is local-first: no paid APIs, no external cloud detection calls, and no raw prompt persistence inside the detection endpoint. Gateway routes consume the detection result and replace detected sensitive spans with `****` before sending sanitized text to the local Ollama service.
+The implementation is local-first: no paid APIs, no external cloud detection calls, and no raw prompt persistence inside the detection endpoint. Gateway routes pass the detection result to Component 02, which replaces the detected spans with typed placeholders before any text is sent to the local Ollama service.
+
+## Component 02: Prompt Sanitization & Risk Assessment
+
+Code lives in `python_gateway/prompt_sanitizer/`.
+
+- **Sanitizer** (`sanitizer.py`): replaces each detected span with a typed, numbered placeholder such as `[EMAIL_ADDRESS_1]` or `[CREDIT_CARD_NUMBER_1]`. The same value always gets the same placeholder, so the model can still follow references. The placeholder-to-value map stays in memory for the request only. PII placeholders in the model's reply are restored for the user; credentials and card data never are. Low-risk place and company names are left in place, so ordinary questions stay readable.
+- **Risk assessor** (`risk_assessment.py`): gives each entity type a weight (private key 80, cloud or API key 60, card 50, password 50, NIC 30, email 15, phone 10, location 5, and so on). The weight is scaled by detection confidence, with a smaller add-on for repeats and +10 for each extra data category in the same prompt. The score is capped at 100: LOW < 25 ≤ MEDIUM < 50 ≤ HIGH < 80 ≤ CRITICAL. The assessor recommends ALLOW, SANITIZE or BLOCK and lists the factors behind the score.
+- **Decision**: the gateway applies the stricter of the Component 02 risk recommendation and the Component 03 policy decision. A prompt that is only "sanitize" under each rule is still blocked when the combined risk is critical, for example a card, NIC, IBAN and contact details for one customer.
+
+The browser extension in `../browser-extension` uses `POST /api/v1/sanitize` to apply the same pipeline to ChatGPT, Gemini, Copilot, Claude and Perplexity. See its README for installation.
 
 ## Component 04: Audit Logging & Security Dashboard
 
@@ -57,6 +67,7 @@ Detection endpoints:
 
 - `POST /api/v1/detect`
 - `POST /api/v1/detect/batch`
+- `POST /api/v1/sanitize` (login required; used by the browser extension)
 - `GET /api/v1/health`
 - `GET /api/v1/ready`
 - `GET /health`
@@ -181,7 +192,7 @@ The new detection API and Security Policy & Access Control Engine are mounted in
 
 ## Local Ollama Gateway
 
-The root page is a secure chat gateway. It performs Component 01 detection, masks detected sensitive values with `****`, forwards only the sanitized prompt to Ollama, and writes Component 04 audit logs. Component 02 Prompt Sanitization & Risk Assessment and Component 03 Security Policy & Access Control have explicit extension points so other team members can replace the current deterministic masking and allow/redact decision logic later.
+The root page is a secure chat gateway. For every prompt it runs Component 01 detection, Component 02 sanitization and risk scoring, and Component 03 policy. It forwards only the placeholder version of an allowed or sanitized prompt to Ollama, and writes one Component 04 audit record per prompt.
 
 Default model:
 
