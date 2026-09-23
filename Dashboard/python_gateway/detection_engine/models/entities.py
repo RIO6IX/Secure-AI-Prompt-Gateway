@@ -39,6 +39,7 @@ class DetectionMethod(StrEnum):
 
 
 class DetectionCandidate(BaseModel):
+    entity_id: str = Field(default_factory=lambda: f"ent-{uuid4().hex}")
     entity_type: str
     category: Category
     start: int
@@ -52,7 +53,3 @@ class DetectionCandidate(BaseModel):
     context: str = ""
     language_guess: str | None = None
     metadata: dict[str, int | float | str | bool] = Field(default_factory=dict)
-
-    @property
-    def entity_id(self) -> str:
-        return f"ent-{uuid4().hex}"
