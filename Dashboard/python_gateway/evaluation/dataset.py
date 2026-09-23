@@ -69,6 +69,10 @@ CASES: tuple[Case, ...] = (
     Case("login with admin / password = Summer2026!", (("PASSWORD", "Summer2026!"),)),
     Case("key AKIA\u200bZ7Q2WJ5K3LMNOPQR hidden with a zero-width space",
          (("AWS_ACCESS_KEY", "AKIA\u200bZ7Q2WJ5K3LMNOPQR"),), "evasion"),
+    Case("SECRET_KEY=django-insecure-8f#k2@x!q9z$w7v6u5\nDEBUG=True",
+         (("GENERIC_API_KEY", "django-insecure-8f#k2@x!q9z$w7v6u5"),)),
+    Case(f"client_secret={synthetic(24)}", (("GENERIC_API_KEY", synthetic(24)),)),
+    Case("Authorization: Basic YWRtaW46U3VwM3JTM2NyZXQh", (("BASIC_AUTH_CREDENTIALS", "YWRtaW46U3VwM3JTM2NyZXQh"),)),
 
     # --- financial --------------------------------------------------------------
     Case("Refund card 4539 1488 0343 6467 please", (("CREDIT_CARD_NUMBER", "4539 1488 0343 6467"),)),
@@ -90,6 +94,11 @@ CASES: tuple[Case, ...] = (
     Case("Server 192.168.10.25 is down", (("IP_ADDRESS", "192.168.10.25"),)),
     Case("Please draft a letter to Priya Fernando about her claim", (("PERSON_NAME", "Priya Fernando"),)),
 
+    Case("Account number 1234567890123 at Commercial Bank", (("BANK_ACCOUNT_NUMBER", "1234567890123"),)),
+    Case("My address is No. 25, Galle Road, Colombo 03", (("STREET_ADDRESS", "No. 25, Galle Road, Colombo 03"),)),
+    Case("Mr. Kamal Perera and ms. nimali silva joined",
+         (("PERSON_NAME", "Kamal Perera"), ("PERSON_NAME", "nimali silva"))),
+
     # --- hard negatives (must stay clean) --------------------------------------
     Case("Explain the difference between hashing and encryption."),
     Case("What is the capital of Sri Lanka?"),
@@ -108,6 +117,10 @@ CASES: tuple[Case, ...] = (
     Case("Order N1234567 shipped today"),
     Case("paste the token here and the api will respond"),
     Case("SELECT name FROM users WHERE id = 42"),
+    Case("API_KEY=${API_KEY} is read from the environment"),
+    Case("token: <your-token-here>"),
+    Case("Open the account at the branch in Kandy"),
+    Case("We sold 25 units on the road yesterday"),
     Case("Our company is based in the city centre near the main station."),
 )
 

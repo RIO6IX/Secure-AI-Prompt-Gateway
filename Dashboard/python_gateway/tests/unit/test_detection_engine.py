@@ -27,7 +27,8 @@ def test_short_password_assignment_is_detected_and_masked() -> None:
 
     assert result.contains_sensitive_data is True
     assert passwords
-    assert passwords[0].masked_value == "****"
+    # Passwords are fully hidden in previews, including their length.
+    assert passwords[0].masked_value == "********"
     assert passwords[0].risk_level == "CRITICAL"
 
 

@@ -6,6 +6,8 @@ from detection_engine.models.entities import Category, DetectionCandidate, Valid
 SPECIFICITY = {
     "AWS_ACCESS_KEY": 100,
     "OPENAI_API_KEY": 100,
+    "BASIC_AUTH_CREDENTIALS": 100,
+    "STRIPE_WEBHOOK_SECRET": 100,
     "AWS_SECRET_ACCESS_KEY": 100,
     "ANTHROPIC_API_KEY": 100,
     "HUGGINGFACE_TOKEN": 100,
@@ -28,6 +30,8 @@ SPECIFICITY = {
     "CREDIT_CARD_NUMBER": 90,
     "IBAN": 90,
     "PASSWORD": 85,
+    "BANK_ACCOUNT_NUMBER": 85,
+    "STREET_ADDRESS": 75,
     "BEARER_TOKEN": 85,
     "JWT_TOKEN": 85,
     "EMAIL_ADDRESS": 80,

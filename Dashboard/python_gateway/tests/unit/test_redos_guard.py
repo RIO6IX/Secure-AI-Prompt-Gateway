@@ -26,6 +26,12 @@ BUDGET_SECONDS = 5.0
     "Ab9+/",
     "password is ",
     "-----BEGIN RSA PRIVATE KEY-----\n",
+    "a-",           # long secret-name candidates (was quadratic: 57 s)
+    "x_secret=",
+    "No. 1 ",       # street address prefix
+    "Mr. a ",       # honorific names
+    "account 1 ",   # bank account context
+    "Basic ",       # basic auth header
 ])
 def test_adversarial_input_finishes_quickly(unit: str) -> None:
     prompt = (unit * (settings.max_prompt_length // len(unit) + 1))[: settings.max_prompt_length]

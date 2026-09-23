@@ -5,13 +5,13 @@ is, and how to reproduce the numbers.
 
 ## Method
 
-- **Dataset:** `python_gateway/evaluation/dataset.py` has 50 labelled
+- **Dataset:** `python_gateway/evaluation/dataset.py` has 60 labelled
   prompts covering credentials, financial data and personal data. Every
   value is synthetic: vendor keys are built to the documented length from
   a fixed alphabet, and card numbers are issuer test numbers.
-- **Hard negatives:** 18 of the prompts contain nothing sensitive but look
+- **Hard negatives:** 22 of the prompts contain nothing sensitive but look
   sensitive to a naive scanner: UUIDs, commit hashes, order and invoice
-  numbers, version numbers, URLs, release dates, "my password is too
+  numbers, version numbers, URLs, release dates, template values such as `${API_KEY}`, "my password is too
   short", and all-caps words.
 - **Matching:** a prediction is a true positive when its entity type
   matches the label and its span overlaps the labelled value. Any other
@@ -39,11 +39,14 @@ It fails if overall precision or recall drops below 0.95.
 | ANTHROPIC_API_KEY | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | AWS_ACCESS_KEY | 3 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | AWS_SECRET_ACCESS_KEY | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
+| BANK_ACCOUNT_NUMBER | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
+| BASIC_AUTH_CREDENTIALS | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | CREDIT_CARD_NUMBER | 4 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | CVV | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | DATABASE_CONNECTION_STRING | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | DATE_OF_BIRTH | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | EMAIL_ADDRESS | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
+| GENERIC_API_KEY | 2 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | GITHUB_TOKEN | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | GOOGLE_API_KEY | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | HUGGINGFACE_TOKEN | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
@@ -54,14 +57,17 @@ It fails if overall precision or recall drops below 0.95.
 | PASSPORT_NUMBER | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | PASSWORD | 3 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | PEM_PRIVATE_KEY | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
-| PERSON_NAME | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
+| PERSON_NAME | 3 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | PHONE_NUMBER | 2 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | SLACK_TOKEN | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | SLACK_WEBHOOK | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | SRI_LANKAN_NIC | 2 | 0 | 0 | 1.00 | 1.00 | 1.00 |
+| STREET_ADDRESS | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | STRIPE_SECRET_KEY | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
 | SWIFT_BIC | 1 | 0 | 0 | 1.00 | 1.00 | 1.00 |
-| **Overall** | 34 | 0 | 0 | **1.000** | **1.000** | **1.000** |
+| **Overall** | 41 | 0 | 0 | **1.000** | **1.000** | **1.000** |
+
+60 prompts (22 hard negatives); latency median 1.9 ms, p95 2.9 ms
 
 For larger inputs, the median latency on the same machine is about 23 ms
 for 2,000 characters and 225 ms for 50,000 characters. NER is capped at
