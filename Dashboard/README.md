@@ -44,10 +44,20 @@ flowchart TD
 
 ## Supported Detection
 
-- Credentials: AWS keys, GitHub/GitLab tokens, Google API keys, Stripe keys, Slack tokens, JWTs, bearer tokens, passwords, DB connection strings, private-key headers, generic API keys, high-entropy secrets.
-- PII: email, phone, person/location/organization via optional spaCy NER, IP addresses, URL credentials, Sri Lankan NIC old/new formats.
-- Financial: Luhn-validated card numbers, contextual CVV, IBAN, SWIFT/BIC.
-- Source code/IP: code-like blocks, SQL/config/IaC signals, internal/proprietary/confidential context.
+- **Credentials:**
+  - Cloud and AI provider keys: AWS access key and secret key, Azure Storage account key, GCP service-account key ID, OpenAI, Anthropic, Hugging Face and Google API keys.
+  - Developer and messaging tokens: GitHub, GitLab, Stripe, Slack tokens and webhooks, SendGrid, npm, Telegram bot tokens.
+  - JWTs and bearer tokens.
+  - Passwords, including `key=value`, env-style (`DB_PASSWORD=`) and JSON forms.
+  - Database connection strings.
+  - Complete PEM, PKCS#8, OpenSSH and PGP private-key blocks.
+  - Generic API keys, and high-entropy secrets that have no fixed format.
+- **PII:** email addresses, phone numbers, Sri Lankan NIC numbers (old and new formats, with birth-date validation), passport numbers and dates of birth (both only next to a context word), IP addresses, URLs with embedded credentials, and person, location and organisation names found by spaCy NER.
+- **Financial:** card numbers checked with the Luhn algorithm (separated by spaces, hyphens or dots), CVV next to a context word, IBAN with the mod-97 checksum, and SWIFT/BIC next to a context word.
+- **Source code / IP:** code-like blocks, SQL, config and infrastructure-as-code signals, and "internal", "proprietary" or "confidential" wording.
+- **Evasion resistance:** zero-width and other invisible Unicode characters are removed, and full-width characters are normalised (NFKC), before matching.
+
+Accuracy and latency are measured by a labelled benchmark (`python -m evaluation.run`). See [docs/detection-engine-evaluation.md](docs/detection-engine-evaluation.md).
 
 ## API
 
@@ -115,13 +125,13 @@ docker compose --profile monitoring up --build
 
 ## Configuration
 
-Copy `.env.example` for local overrides.
+Copy `.env.example` to `.env` and pass it to uvicorn with `--env-file ../.env`. The file lists every setting with its default. The most important ones:
 
 - `ENVIRONMENT=development` or `production`
 - `JWT_SECRET=<random value with at least 32 characters>`
 - `TOKEN_TTL_SECONDS=43200`
 - `CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000`
-- `DB_PATH=python_gateway/audit_logs.sqlite3`
+- `DB_PATH` (default `python_gateway/audit_logs.sqlite3`; use an absolute path when overriding)
 - `MAX_PROMPT_CHARS=50000`
 - `PASSWORD_MIN_LENGTH=12`
 - `PASSWORD_PBKDF2_ITERATIONS=310000`
@@ -133,6 +143,7 @@ Copy `.env.example` for local overrides.
 - `ENABLE_NER=true`
 - `ENABLE_METRICS=true`
 - `SPACY_MODEL=en_core_web_sm`
+- `NER_MAX_CHARS=20000` (NER coverage cap; regex, checksum and entropy rules always scan the whole prompt)
 
 ## Production Hardening Checklist
 
