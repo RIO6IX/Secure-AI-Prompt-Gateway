@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from detection_engine.detectors.base import BaseDetector, DetectionContext
 from detection_engine.models.entities import DetectionCandidate, DetectionMethod, ValidationStatus
 from detection_engine.rules.regex_rules import REGEX_RULES
@@ -17,6 +19,10 @@ from detection_engine.validators.secret_format import is_secret_format_valid
 STRICTLY_VALIDATED = {"IP_ADDRESS", "IPV6_ADDRESS", "CREDIT_CARD_NUMBER", "IBAN", "SRI_LANKAN_NIC", "DATE_OF_BIRTH"}
 
 
+# "version 1.2.3.4" / "v10.0.0.1" are software versions, not hosts.
+VERSION_PREFIX_RE = re.compile(r"(?i)\b(?:version|ver\.?|release|build|v)\s*$")
+
+
 class RegexDetector(BaseDetector):
     name = "regex_detector"
 
@@ -28,6 +34,8 @@ class RegexDetector(BaseDetector):
             for match in rule.pattern.finditer(text):
                 value = match.group(1) if match.lastindex else match.group(0)
                 start, end = match.span(1) if match.lastindex else match.span(0)
+                if rule.entity_type == "IP_ADDRESS" and VERSION_PREFIX_RE.search(text[max(0, start - 12):start]):
+                    continue
                 validation = self._validate(rule.validator_name, rule.entity_type, value)
                 if validation in {ValidationStatus.FORMAT_INVALID, ValidationStatus.CHECKSUM_INVALID}:
                     if rule.entity_type in STRICTLY_VALIDATED:

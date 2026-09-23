@@ -63,6 +63,20 @@ class PiiDetector(BaseDetector):
         except Exception:
             self.presidio_available = False
 
+    @staticmethod
+    def _ambiguous_single_name(entity) -> bool:
+        """One-word PERSON hits that are usually not names.
+
+        The small model tags acronyms ("NIC") and ordinary words that are
+        capitalised only because they start a sentence ("Email the report")
+        as people. Multi-word names and one-word names mid-sentence are kept.
+        """
+        if entity.text.isupper():
+            return True
+        doc = entity.doc
+        before = doc.text[:entity.start_char].rstrip()
+        return not before or before[-1] in ".!?:\n"
+
     def detect(self, text: str, context: DetectionContext) -> list[DetectionCandidate]:
         if not self._nlp:
             return []
@@ -87,6 +101,8 @@ class PiiDetector(BaseDetector):
                 # Names of people, places and organisations are capitalised; an
                 # all-lowercase hit ("token", "api") is a tagging error.
                 if not any(char.isupper() for char in entity.text):
+                    continue
+                if entity.label_ == "PERSON" and len(entity) == 1 and self._ambiguous_single_name(entity):
                     continue
                 entity_type, confidence = LABEL_MAPPING[entity.label_]
                 findings.append(DetectionCandidate(
