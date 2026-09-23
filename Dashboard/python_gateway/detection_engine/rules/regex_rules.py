@@ -35,6 +35,42 @@ PASSWORD_PATTERN = (
 )
 
 
+# Config/env/header assignments whose *name* says it holds a secret:
+# SECRET_KEY=..., client_secret: ..., "x-api-key": ..., STRIPE_WEBHOOK_SECRET=...
+# The name stays visible (useful context for the model); only the value is
+# captured. Values may contain any non-space character, so Django-style
+# keys with #, @, ! and $ are covered in full.
+# Name parts are bounded ({0,40}) and a match may only start where a name
+# starts: an unbounded lazy prefix made "1.1.1.1..." prompts quadratic
+# (57 s for 50k characters).
+SECRET_NAME = (
+    r"[A-Za-z0-9_.-]{0,40}?(?:secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|"
+    r"auth[_-]?key|signing[_-]?key|encryption[_-]?key|credentials?|passphrase)[A-Za-z0-9_.-]{0,40}"
+)
+SECRET_ASSIGNMENT_PATTERN = (
+    rf"(?i)(?<![A-Za-z0-9_.-]){SECRET_NAME}[\"']?\s*[:=]\s*[\"']?"
+    # "&" ends the value so URL query strings (?api_key=...&x=1) split correctly.
+    r"([^\s\"'`,;&]{8,256})"
+)
+# Honorific + name. Catches names spaCy misses (lowercase, uncommon names);
+# stops before words that usually follow a name in a sentence.
+NAME_STOPWORDS = (
+    "and|or|the|to|from|with|at|in|on|of|for|is|was|will|has|had|have|said|joined|"
+    "asked|called|who|which|please|about|by|as"
+)
+HONORIFIC_NAME_PATTERN = (
+    r"\b(?:(?i:mr|mrs|dr|prof|rev|miss)\.?|(?i:ms)\.)\s+"
+    rf"([A-Za-z][A-Za-z'-]+(?:\s+(?!(?:{NAME_STOPWORDS})\b)[A-Za-z][A-Za-z'-]+){{0,2}})\b"
+)
+# House number (No. 25 / 42/1 / 12A) + 1-3 capitalised words + street type,
+# optionally followed by ", City [01-15 | 5-digit postcode]".
+STREET_TYPES = "road|rd|street|st|lane|ln|mawatha|mw|avenue|ave|place|pl|drive|dr|terrace|gardens|para|veediya|highway|hwy"
+STREET_ADDRESS_PATTERN = (
+    r"\b(?:[Nn]o\.?\s*)?\d{1,4}(?:[/-]\d{1,3})?[A-Za-z]?,?\s+(?:[A-Z][A-Za-z]+\s+){1,3}"
+    rf"(?i:{STREET_TYPES})\b\.?(?:,\s*[A-Z][a-z]+(?:\s+\d{{5}}|\s+\d{{1,2}}\b)?)?"
+)
+
+
 REGEX_RULES: tuple[RegexRule, ...] = (
     RegexRule("aws_access_key_id", "AWS_ACCESS_KEY", Category.CREDENTIAL, re.compile(r"\bAKIA[0-9A-Z]{16}\b"), 0.90, RiskLevel.CRITICAL, ("aws", "access key", "secret"), "secret_format"),
     RegexRule("aws_secret_access_key", "AWS_SECRET_ACCESS_KEY", Category.CREDENTIAL, re.compile(r"(?i)\b(?:aws_?secret_?access_?key|aws_?secret_?key|secret_?access_?key)[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9/+=]{40})(?![A-Za-z0-9/+=])"), 0.92, RiskLevel.CRITICAL, ("aws", "secret"), None),
@@ -55,7 +91,9 @@ REGEX_RULES: tuple[RegexRule, ...] = (
     RegexRule("jwt_token", "JWT_TOKEN", Category.CREDENTIAL, re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), 0.88, RiskLevel.HIGH, ("jwt", "bearer", "authorization"), "secret_format"),
     RegexRule("bearer_token", "BEARER_TOKEN", Category.CREDENTIAL, re.compile(r"(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{16,256})\b"), 0.86, RiskLevel.CRITICAL, ("authorization", "bearer"), None),
     RegexRule("password_assignment", "PASSWORD", Category.CREDENTIAL, re.compile(PASSWORD_PATTERN), 0.90, RiskLevel.CRITICAL, ("password", "pwd"), None),
-    RegexRule("generic_api_key", "GENERIC_API_KEY", Category.CREDENTIAL, re.compile(r"(?i)\b(?:api[_ -]?key|secret|token)\s*[:=]\s*[\"']?([A-Za-z0-9._~+/=-]{16,128})[\"']?"), 0.78, RiskLevel.HIGH, ("api key", "secret", "token"), None),
+    RegexRule("secret_assignment", "GENERIC_API_KEY", Category.CREDENTIAL, re.compile(SECRET_ASSIGNMENT_PATTERN), 0.80, RiskLevel.HIGH, ("api key", "secret", "token"), "secret_value"),
+    RegexRule("basic_auth_header", "BASIC_AUTH_CREDENTIALS", Category.CREDENTIAL, re.compile(r"(?i)\bbasic\s+([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])"), 0.92, RiskLevel.CRITICAL, ("authorization", "basic"), "basic_auth"),
+    RegexRule("stripe_webhook_secret", "STRIPE_WEBHOOK_SECRET", Category.CREDENTIAL, re.compile(r"\bwhsec_[A-Za-z0-9]{24,64}\b"), 0.95, RiskLevel.CRITICAL, ("stripe", "webhook"), None),
     RegexRule("database_connection_string", "DATABASE_CONNECTION_STRING", Category.CREDENTIAL, re.compile(r"(?i)\b(?:postgresql|postgres|mysql|mongodb|redis|mssql)://[^\s'\"<>]{8,256}"), 0.88, RiskLevel.CRITICAL, ("database", "connection", "password"), None),
     # Private keys match the whole block, not just the BEGIN line: the key
     # material is in the body. A block pasted without its END line (a common
@@ -70,6 +108,9 @@ REGEX_RULES: tuple[RegexRule, ...] = (
     RegexRule("url_with_credentials", "URL_WITH_CREDENTIALS", Category.PII, re.compile(r"(?i)\bhttps?://[A-Za-z0-9._%+-]{1,64}:[^@\s]{1,128}@[^\s/$.?#].[^\s]{1,200}"), 0.90, RiskLevel.CRITICAL, ("url", "credentials"), None),
     RegexRule("sri_lankan_old_nic", "SRI_LANKAN_NIC", Category.PII, re.compile(r"\b\d{9}[VXvx]\b"), 0.55, RiskLevel.MEDIUM, ("nic", "identity", "national identity card"), "nic"),
     RegexRule("sri_lankan_new_nic", "SRI_LANKAN_NIC", Category.PII, re.compile(r"\b\d{12}\b"), 0.42, RiskLevel.LOW, ("nic", "identity", "national identity card"), "nic"),
+    RegexRule("honorific_name", "PERSON_NAME", Category.PII, re.compile(HONORIFIC_NAME_PATTERN), 0.72, RiskLevel.MEDIUM, ("name",), None),
+    RegexRule("street_address", "STREET_ADDRESS", Category.PII, re.compile(STREET_ADDRESS_PATTERN), 0.78, RiskLevel.MEDIUM, ("address", "ship", "deliver", "live"), None),
+    RegexRule("bank_account_number", "BANK_ACCOUNT_NUMBER", Category.FINANCIAL, re.compile(r"(?i)\b(?:bank\s+)?(?:account|acct|acc|a/c)\.?\s*(?:no\.?|number|num|#)?\s*(?:is|:)?\s*(\d(?:[ -]?\d){7,17})\b"), 0.82, RiskLevel.HIGH, ("bank", "account", "branch"), None),
     RegexRule("passport_number", "PASSPORT_NUMBER", Category.PII, re.compile(r"(?i:\bpassport(?:\s*(?:no\.?|number|num|#))?\s*(?:is|:)?\s*)\b([A-Z]{1,2}\d{6,8})\b"), 0.82, RiskLevel.HIGH, ("passport", "travel document"), None),
     RegexRule("date_of_birth", "DATE_OF_BIRTH", Category.PII, re.compile(r"(?i)\b(?:date\s+of\s+birth|d\.?o\.?b\.?|birth\s*date|born\s+on)\s*(?:is|:|-)?\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\b"), 0.80, RiskLevel.MEDIUM, ("birth", "dob", "born"), "date_of_birth"),
     RegexRule("credit_card_candidate", "CREDIT_CARD_NUMBER", Category.FINANCIAL, re.compile(r"\b\d(?:[ .-]?\d){12,18}\b"), 0.52, RiskLevel.MEDIUM, ("credit card", "card", "payment"), "luhn"),

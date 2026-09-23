@@ -16,6 +16,18 @@ UNUSED_PIPES = ["tagger", "parser", "attribute_ruler", "lemmatizer", "senter"]
 # nlp.pipe batch the work.
 CHUNK_CHARS = 5_000
 
+# Sri Lankan districts and major towns. The small English model often tags
+# them as PERSON ("branch Kandy"); these hits are re-labelled LOCATION.
+SRI_LANKAN_PLACES = frozenset({
+    "colombo", "gampaha", "kalutara", "kandy", "matale", "nuwara eliya", "galle", "matara",
+    "hambantota", "jaffna", "kilinochchi", "mannar", "vavuniya", "mullaitivu", "batticaloa",
+    "ampara", "trincomalee", "kurunegala", "puttalam", "anuradhapura", "polonnaruwa", "badulla",
+    "monaragala", "ratnapura", "kegalle", "negombo", "moratuwa", "dehiwala", "mount lavinia",
+    "kotte", "sri jayawardenepura kotte", "maharagama", "kaduwela", "panadura", "beruwala",
+    "hikkaduwa", "ella", "dambulla", "sigiriya", "chilaw", "kalmunai", "horana", "wattala",
+    "ja-ela", "kelaniya", "nugegoda", "battaramulla", "malabe", "homagama", "piliyandala",
+})
+
 LABEL_MAPPING = {
     "PERSON": ("PERSON_NAME", 0.60),
     "GPE": ("LOCATION", 0.55),
@@ -107,7 +119,10 @@ class PiiDetector(BaseDetector):
                 # Personal names do not contain digits; "Zk3qP9rT..." is a token.
                 if entity.label_ == "PERSON" and any(char.isdigit() for char in entity.text):
                     continue
-                entity_type, confidence = LABEL_MAPPING[entity.label_]
+                label = entity.label_
+                if label == "PERSON" and entity.text.lower() in SRI_LANKAN_PLACES:
+                    label = "GPE"
+                entity_type, confidence = LABEL_MAPPING[label]
                 findings.append(DetectionCandidate(
                     entity_type=entity_type,
                     category=Category.PII,
@@ -117,6 +132,6 @@ class PiiDetector(BaseDetector):
                     confidence=confidence,
                     risk_level=RiskLevel.MEDIUM if entity_type == "PERSON_NAME" else RiskLevel.LOW,
                     detection_methods=[DetectionMethod.NER],
-                    rule_name=f"spacy_{entity.label_.lower()}",
+                    rule_name=f"spacy_{label.lower()}",
                 ))
         return findings
