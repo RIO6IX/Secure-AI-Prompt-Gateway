@@ -5,6 +5,7 @@ from detection_engine.models.entities import Category, DetectionCandidate, Valid
 
 SPECIFICITY = {
     "AWS_ACCESS_KEY": 100,
+    "OPENAI_API_KEY": 100,
     "GITHUB_TOKEN": 100,
     "GITLAB_TOKEN": 100,
     "GOOGLE_API_KEY": 100,

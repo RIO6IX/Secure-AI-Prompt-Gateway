@@ -56,3 +56,12 @@ def test_swift_requires_context_and_iban_is_detected() -> None:
     assert found["IBAN"] == "GB82WEST12345698765432"
     assert found["SWIFT_BIC"] == "DEUTDEFF"
     assert "IBAN" not in detect_types("Wire it to GB82WEST12345698765433")
+
+
+def test_openai_project_key_is_detected_as_critical_credential() -> None:
+    result = ENGINE.detect(DetectRequest(prompt="Fix login. API key is sk-proj-ABC1234567890secret and nothing else"))
+    keys = [entity for entity in result.detected_entities if entity.entity_type == "OPENAI_API_KEY"]
+
+    assert keys
+    assert keys[0].risk_level == "CRITICAL"
+    assert "ABC1234567890" not in keys[0].masked_value

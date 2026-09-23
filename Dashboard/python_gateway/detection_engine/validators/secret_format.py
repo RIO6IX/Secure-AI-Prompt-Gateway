@@ -5,6 +5,7 @@ import re
 
 SECRET_FORMATS: dict[str, re.Pattern[str]] = {
     "AWS_ACCESS_KEY": re.compile(r"^AKIA[0-9A-Z]{16}$"),
+    "OPENAI_API_KEY": re.compile(r"^sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,200}$"),
     "GITHUB_TOKEN": re.compile(r"^gh[pousr]_[A-Za-z0-9_]{20,255}$"),
     "GITLAB_TOKEN": re.compile(r"^glpat-[A-Za-z0-9_-]{20,255}$"),
     "GOOGLE_API_KEY": re.compile(r"^AIza[0-9A-Za-z_-]{35}$"),
