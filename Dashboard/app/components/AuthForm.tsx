@@ -38,7 +38,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
 
       window.localStorage.setItem(TOKEN_KEY, payload.token);
       window.localStorage.setItem(USER_KEY, JSON.stringify(payload.user));
-      window.location.href = "/";
+      window.location.assign("/");
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "Authentication failed");
     } finally {
@@ -58,7 +58,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         </div>
 
         <div className="auth-copy">
-          <p>{isRegister ? "Create local admin account" : "Security admin login"}</p>
+          <p>{isRegister ? "Create an account (the first account becomes admin)" : "Sign in to the gateway"}</p>
           <h1>{isRegister ? "Register" : "Login"}</h1>
           <span>Use your local Python backend at {API_BASE_URL}</span>
         </div>
@@ -76,7 +76,16 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
           </label>
           <label>
             Password
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Minimum 8 characters" minLength={8} required />
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder={isRegister ? "At least 12 characters" : "Password"}
+              minLength={isRegister ? 12 : undefined}
+              autoComplete={isRegister ? "new-password" : "current-password"}
+              required
+            />
+            {isRegister ? <small>Use 12+ characters with at least three of: lowercase, uppercase, digit, symbol.</small> : null}
           </label>
           {error ? <div className="backend-error">{error}</div> : null}
           <button type="submit" disabled={loading}>

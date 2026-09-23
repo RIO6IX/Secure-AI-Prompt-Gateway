@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { API_BASE_URL, TOKEN_KEY, USER_KEY, authHeaders, getStoredToken } from "../lib/api";
+import { useStoredUser } from "../lib/storage";
 
 type Role = "admin" | "auditor" | "user";
 type Row = Record<string, string | number | boolean | null>;
@@ -9,13 +10,13 @@ type Row = Record<string, string | number | boolean | null>;
 function logout() {
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(USER_KEY);
-  window.location.href = "/login";
+  window.location.assign("/login");
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getStoredToken();
   if (!token) {
-    window.location.href = "/login";
+    window.location.assign("/login");
     throw new Error("Login required");
   }
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -45,12 +46,7 @@ function PageChrome({
   description: string;
   children: React.ReactNode;
 }) {
-  const [user, setUser] = useState<Row | null>(null);
-
-  useEffect(() => {
-    const raw = window.localStorage.getItem(USER_KEY);
-    if (raw) setUser(JSON.parse(raw) as Row);
-  }, []);
+  const user = useStoredUser();
 
   return (
     <main className="dashboard-shell page-only-shell">
@@ -63,11 +59,11 @@ function PageChrome({
           </div>
         </div>
         <nav aria-label="Page navigation">
-          <button type="button" onClick={() => { window.location.href = "/"; }}><span className="nav-dot" />Gateway Chat</button>
-          <button type="button" onClick={() => { window.location.href = "/dashboard"; }}><span className="nav-dot" />Dashboard</button>
-          <button type="button" className={title === "Audit Logs" ? "active" : ""} onClick={() => { window.location.href = "/audit-logs"; }}><span className="nav-dot" />Audit Logs</button>
-          <button type="button" className={title === "System Settings" ? "active" : ""} onClick={() => { window.location.href = "/system-settings"; }}><span className="nav-dot" />System Settings</button>
-          {user?.role === "admin" ? <button type="button" className={title === "Admin Panel" ? "active" : ""} onClick={() => { window.location.href = "/admin"; }}><span className="nav-dot" />Admin Panel</button> : null}
+          <button type="button" onClick={() => { window.location.assign("/"); }}><span className="nav-dot" />Gateway Chat</button>
+          <button type="button" onClick={() => { window.location.assign("/dashboard"); }}><span className="nav-dot" />Dashboard</button>
+          <button type="button" className={title === "Audit Logs" ? "active" : ""} onClick={() => { window.location.assign("/audit-logs"); }}><span className="nav-dot" />Audit Logs</button>
+          <button type="button" className={title === "System Settings" ? "active" : ""} onClick={() => { window.location.assign("/system-settings"); }}><span className="nav-dot" />System Settings</button>
+          {user?.role === "admin" ? <button type="button" className={title === "Admin Panel" ? "active" : ""} onClick={() => { window.location.assign("/admin"); }}><span className="nav-dot" />Admin Panel</button> : null}
         </nav>
       </aside>
       <section className="workspace">
@@ -144,7 +140,11 @@ export function AuditLogsPage() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    apiFetch<Row[]>("/audit/events").then(setEvents, (loadError: unknown) =>
+      setError(loadError instanceof Error ? loadError.message : "Could not load audit logs"),
+    );
+  }, []);
 
   return (
     <PageChrome title="Audit Logs" description="Separate audit log webpage. Admin and auditor roles can read this page.">
@@ -275,7 +275,12 @@ export function AdminPanelPage() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    apiFetch<{ users: Row[] }>("/users").then(
+      (payload) => setUsers(payload.users),
+      (loadError: unknown) => setError(loadError instanceof Error ? loadError.message : "Could not load users"),
+    );
+  }, []);
 
   return (
     <PageChrome title="Admin Panel" description="Create users and assign admin, auditor, or user roles.">
@@ -287,7 +292,7 @@ export function AdminPanelPage() {
           <form className="prompt-form" onSubmit={createUser}>
             <label>Name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
             <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-            <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} required /></label>
+            <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={12} autoComplete="new-password" required /></label>
             <label>Role
               <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
                 <option value="admin">admin - all privileges</option>

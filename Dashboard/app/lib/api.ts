@@ -9,7 +9,7 @@ export function getStoredToken() {
   return window.localStorage.getItem(TOKEN_KEY) ?? "";
 }
 
-export function authHeaders(token = getStoredToken()) {
+export function authHeaders(token = getStoredToken()): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 

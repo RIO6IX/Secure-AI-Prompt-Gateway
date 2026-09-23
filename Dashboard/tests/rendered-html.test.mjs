@@ -34,10 +34,12 @@ test("gateway chat and dashboard are wired to the real backend", async () => {
   assert.match(dashboard, /No records in the backend yet/);
   assert.match(dashboard, /Prompt Monitor/);
   assert.match(dashboard, /setActiveView/);
-  assert.match(dashboard, /window\.location\.href = "\/audit-logs"/);
-  assert.match(dashboard, /window\.location\.href = "\/system-settings"/);
-  assert.match(dashboard, /window\.location\.href = "\/admin"/);
+  assert.match(dashboard, /window\.location\.assign\("\/audit-logs"\)/);
+  assert.match(dashboard, /window\.location\.assign\("\/system-settings"\)/);
+  assert.match(dashboard, /window\.location\.assign\("\/admin"\)/);
   assert.doesNotMatch(dashboard, /12,842|john\.doe@company\.com|API key detected in prompt/i);
+  assert.match(dashboard, /totals\.sensitive/);
+  await assert.rejects(access(new URL("security-dashboard-data.ts", templateRoot)));
 
   assert.match(backend, /DB_PATH = Path\(os\.getenv\("DB_PATH", str\(BASE_DIR \/ "audit_logs\.sqlite3"\)\)\)/);
   assert.match(backend, /CORS_ALLOWED_ORIGINS/);
