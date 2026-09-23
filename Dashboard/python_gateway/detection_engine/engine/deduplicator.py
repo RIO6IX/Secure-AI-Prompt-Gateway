@@ -34,6 +34,11 @@ SPECIFICITY = {
     "SRI_LANKAN_NIC": 70,
     "GENERIC_API_KEY": 40,
     "HIGH_ENTROPY_SECRET": 30,
+    # Statistical NER guesses lose to any pattern, checksum or entropy
+    # finding covering the same text.
+    "PERSON_NAME": 20,
+    "LOCATION": 10,
+    "ORGANIZATION": 10,
 }
 VALIDATION_RANK = {
     ValidationStatus.CHECKSUM_VALID: 5,
