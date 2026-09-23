@@ -14,6 +14,18 @@ type GatewayEntity = {
   end: number;
 };
 
+type RiskFactor = {
+  entity_type: string;
+  points: number;
+  reason: string;
+};
+
+type Replacement = {
+  placeholder: string;
+  entity_type: string;
+  masked_value: string;
+};
+
 type GatewayResult = {
   requestId: string;
   userPrompt: string;
@@ -23,6 +35,8 @@ type GatewayResult = {
   actionTaken: string;
   riskLevel: string;
   riskScore: number;
+  riskAssessment: { score: number; level: string; summary: string; factors: RiskFactor[] };
+  replacements: Replacement[];
   containsSensitiveData: boolean;
   detectedEntities: GatewayEntity[];
   auditEvents: Array<Record<string, string | number | boolean | null>>;
@@ -365,12 +379,30 @@ export function SecureGatewayChat() {
           <div className="panel-block risk-level-block">
             <h3>Risk Level</h3>
             <strong className={`risk-pill ${riskClass(currentRisk)}`}>{currentRisk}</strong>
-            <p>
-              {result
-                ? `Risk score ${Math.round(result.riskScore * 100)}/100.`
-                : "Send a prompt to calculate its risk."}
-            </p>
+            <p>{result ? result.riskAssessment.summary : "Send a prompt to calculate its risk."}</p>
+            {result?.riskAssessment.factors.length ? (
+              <ul className="risk-factors">
+                {result.riskAssessment.factors.map((factor) => (
+                  <li key={factor.entity_type}>
+                    <span>{factor.reason}</span>
+                    <strong>+{factor.points}</strong>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
+
+          {result?.replacements.length ? (
+            <div className="panel-block">
+              <h3>Placeholders Used</h3>
+              {result.replacements.map((item) => (
+                <div className="entity-row" key={`${item.placeholder}-${item.masked_value}`}>
+                  <strong>{item.placeholder}</strong>
+                  <code>{item.masked_value}</code>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           <div className="panel-block">
             <h3>Sanitized Prompt Preview</h3>
