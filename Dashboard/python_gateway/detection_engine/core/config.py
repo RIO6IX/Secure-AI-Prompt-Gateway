@@ -24,7 +24,9 @@ class Settings:
     enable_metrics: bool = _bool("ENABLE_METRICS", True)
     spacy_model: str = os.getenv("SPACY_MODEL", "en_core_web_sm")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
-    engine_timeout_ms: int = int(os.getenv("DETECTION_TIMEOUT_MS", "2000"))
+    # NER is the only super-linear stage; beyond this many characters it is
+    # skipped (regex, checksum and entropy rules still scan everything).
+    ner_max_chars: int = int(os.getenv("NER_MAX_CHARS", "20000"))
     correlation_salt: str = os.getenv("CORRELATION_SALT", "local-dev-salt-change-me")
 
 

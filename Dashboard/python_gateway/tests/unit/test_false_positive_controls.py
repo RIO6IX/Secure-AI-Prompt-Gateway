@@ -65,3 +65,44 @@ def test_openai_project_key_is_detected_as_critical_credential() -> None:
     assert keys
     assert keys[0].risk_level == "CRITICAL"
     assert "ABC1234567890" not in keys[0].masked_value
+
+
+@pytest.mark.parametrize("prompt, expected", [
+    ("the password is: correct-horse-battery", "correct-horse-battery"),
+    ("password = 1234", "1234"),
+    ("pwd:S3cr3t!", "S3cr3t!"),
+    ('DB_PASSWORD="hunter22"', "hunter22"),
+    ('{"user": "svc", "password": "Tr0ub4dor&3"}', "Tr0ub4dor&3"),
+    ("my passcode is 739104", "739104"),
+])
+def test_password_value_is_captured_not_the_separator(prompt: str, expected: str) -> None:
+    assert detect_types(prompt).get("PASSWORD") == expected
+
+
+@pytest.mark.parametrize("prompt", [
+    "I forgot my password yesterday, how do I reset it?",
+    "my password is too short, what are the rules?",
+    "The password is wrong again.",
+    "your password is not required for SSO",
+])
+def test_password_prose_is_not_flagged(prompt: str) -> None:
+    assert "PASSWORD" not in detect_types(prompt)
+
+
+@pytest.mark.parametrize("prompt", [
+    "clone https://github.com/RIO6IX/Secure-AI-Prompt-Gateway.git and run it",
+    "docs at https://learn.microsoft.com/en-us/azure/storage/common/storage-account-keys-manage",
+    "download https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js",
+])
+def test_ordinary_urls_are_not_high_entropy_secrets(prompt: str) -> None:
+    assert "HIGH_ENTROPY_SECRET" not in detect_types(prompt)
+
+
+def test_token_inside_url_query_is_still_detected() -> None:
+    prompt = "call https://api.example.org/v1/items?token=Zk3qP9rT2wXy7LmN4bVc8HdS"
+    assert detect_types(prompt) == {"GENERIC_API_KEY": "Zk3qP9rT2wXy7LmN4bVc8HdS"}
+
+
+def test_lowercase_words_are_not_named_entities() -> None:
+    found = detect_types("paste the token here and the api will respond")
+    assert not {"ORGANIZATION", "PERSON_NAME", "LOCATION"} & set(found)

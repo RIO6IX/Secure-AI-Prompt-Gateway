@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from detection_engine.models.entities import DetectionCandidate
 
@@ -12,6 +12,8 @@ class DetectionContext:
     original_text: str
     normalized_text: str
     index_map: list[int]
+    # Detectors append notes about reduced coverage (e.g. NER size cap).
+    warnings: list[str] = field(default_factory=list)
 
 
 class BaseDetector(ABC):
