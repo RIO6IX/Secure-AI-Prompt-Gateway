@@ -67,8 +67,8 @@ CASES: tuple[Case, ...] = (
     Case("the password is: correct-horse-battery", (("PASSWORD", "correct-horse-battery"),)),
     Case('DB_PASSWORD="Tr0ub4dor&3"', (("PASSWORD", "Tr0ub4dor&3"),)),
     Case("login with admin / password = Summer2026!", (("PASSWORD", "Summer2026!"),)),
-    Case(f"key AKIA​Z7Q2WJ5K3LMNOPQR hidden with a zero-width space",
-         (("AWS_ACCESS_KEY", "AKIA​Z7Q2WJ5K3LMNOPQR"),), "evasion"),
+    Case("key AKIA\u200bZ7Q2WJ5K3LMNOPQR hidden with a zero-width space",
+         (("AWS_ACCESS_KEY", "AKIA\u200bZ7Q2WJ5K3LMNOPQR"),), "evasion"),
 
     # --- financial --------------------------------------------------------------
     Case("Refund card 4539 1488 0343 6467 please", (("CREDIT_CARD_NUMBER", "4539 1488 0343 6467"),)),
