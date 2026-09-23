@@ -9,7 +9,7 @@ A chat is only useful if the model sees earlier turns ("make it shorter",
 
 Conversations live in memory only, belong to the user who started them,
 expire after CONVERSATION_TTL_MINUTES of inactivity and keep at most
-MAX_HISTORY_MESSAGES messages. Nothing here is written to disk; the audit
+CONVERSATION_MAX_MESSAGES messages. Nothing here is written to disk; the audit
 log records each prompt separately.
 """
 
@@ -98,6 +98,11 @@ class ConversationStore:
                 return False
             del self._items[conversation_id]
             return True
+
+    def active_count(self) -> int:
+        with self._lock:
+            self._expire(time.monotonic())
+            return len(self._items)
 
     def reset(self) -> None:
         with self._lock:

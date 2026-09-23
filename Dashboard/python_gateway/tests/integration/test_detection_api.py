@@ -624,3 +624,23 @@ def test_conversations_are_private_and_can_be_ended(tmp_path, monkeypatch) -> No
     assert client.delete(f"/gateway/conversations/{conversation_id}", headers=owner).status_code == 200
     gone = client.post("/gateway/chat", headers=owner, json={"prompt": "hi", "conversation_id": conversation_id})
     assert gone.status_code == 404
+
+
+def test_metrics_expose_component_two_counters_without_prompt_content(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "metrics.user@example.com")
+
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
+        return "Sure, key AKIAZ7Q2WJ5K3LMNOPQR for [EMAIL_ADDRESS_1]", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    client.post("/gateway/chat", headers=headers, json={"prompt": "mail nimal@company.lk"})
+    client.post("/api/v1/sanitize", headers=headers, json={"prompt": "password = Sup3rS3cret!"})
+
+    text = client.get("/metrics").text
+    assert 'prompt_decisions_total{decision="SANITIZE",source="secure-chat-gateway"}' in text
+    assert 'prompt_decisions_total{decision="BLOCK",source="browser-extension"}' in text
+    assert 'prompt_replacements_total{entity_type="EMAIL_ADDRESS"}' in text
+    assert 'reply_values_masked_total{kind="generated"}' in text
+    assert "conversations_active" in text
+    assert "detection_requests_total" in text  # Component 01 metrics still present
+    assert "nimal" not in text and "Sup3rS3cret" not in text

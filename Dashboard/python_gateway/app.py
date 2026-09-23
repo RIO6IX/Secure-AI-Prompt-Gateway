@@ -30,6 +30,7 @@ from detection_engine.core.logging import configure_logging
 from detection_engine.models.request import DetectRequest
 from detection_engine.models.response import DetectedEntity, DetectionResponse
 from detection_engine.services.health_service import health_payload
+from prompt_sanitizer.metrics import SanitizerMetrics
 from prompt_sanitizer import ConversationAccessError, load_risk_policy, ConversationStore, PromptSanitizer, PseudonymMap, ResponseGuard, RecommendedAction, RiskAssessment, RiskAssessor, SanitizedPrompt
 from security_policy import PolicyAction, PolicyDecision, PolicyEngine, PolicyInput, UserContext
 
@@ -456,6 +457,10 @@ def entity_label(entity_type: str) -> str:
 
 def inspect_prompt(payload: PromptInspectionIn, user: dict[str, str]) -> AuditEventIn:
     verdict, _ = evaluate_prompt(payload.prompt, user, payload.service, payload.department, forward_requested=False)
+    SANITIZER_METRICS.record_prompt(
+        verdict.action, payload.source, verdict.assessment.score,
+        [item.entity_type for item in verdict.sanitized.replacements],
+    )
     action = {"BLOCK": "Prompt blocked", "SANITIZE": "Prompt sanitized"}.get(verdict.action, "Prompt allowed")
     return verdict_audit_event(
         verdict, user["email"], payload.department, payload.service, payload.source, payload.prompt, action,
@@ -469,6 +474,7 @@ def get_policy_engine() -> PolicyEngine:
 PROMPT_SANITIZER = PromptSanitizer()
 RISK_ASSESSOR = RiskAssessor(load_risk_policy(RISK_POLICY_FILE))
 CONVERSATIONS = ConversationStore(ttl_seconds=CONVERSATION_TTL_MINUTES * 60, max_messages=CONVERSATION_MAX_MESSAGES)
+SANITIZER_METRICS = SanitizerMetrics(active_conversations=lambda: CONVERSATIONS.active_count())
 RESPONSE_GUARD = ResponseGuard(lambda text: get_detection_engine().detect(DetectRequest(prompt=text)))
 ACTION_STRICTNESS = {"ALLOW": 0, "SANITIZE": 1, "BLOCK": 2}
 
@@ -852,7 +858,9 @@ def ready() -> dict[str, object]:
 
 @app.get("/metrics")
 def metrics() -> Response:
-    return root_metrics()
+    detection = root_metrics()
+    body = detection.body.decode("utf-8") + SANITIZER_METRICS.render()
+    return Response(body, media_type=detection.media_type)
 
 
 @app.get("/policies")
@@ -1078,6 +1086,10 @@ async def gateway_chat(
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
 
     detection, sanitized, assessment = verdict.detection, verdict.sanitized, verdict.assessment
+    SANITIZER_METRICS.record_prompt(
+        verdict.action, payload.source, verdict.assessment.score,
+        [item.entity_type for item in verdict.sanitized.replacements],
+    )
     should_forward = not verdict.blocked and verdict.policy.allowed_to_forward
     if should_forward:
         raw_reply, ollama_available = await call_ollama(sanitized.text, conversation.history())
@@ -1097,6 +1109,7 @@ async def gateway_chat(
             model_reply, sanitized, keep_values=keep, known_placeholders=working_map.masked,
         )
         assistant_message = guarded.text
+        SANITIZER_METRICS.record_reply(guarded.placeholders_masked, guarded.findings_masked)
     else:
         guarded = None
     if verdict.blocked:
@@ -1198,6 +1211,10 @@ async def sanitize_prompt(
         verdict, _ = evaluate_prompt(payload.prompt, current_user, payload.service, payload.department, True)
     except DetectionError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+    SANITIZER_METRICS.record_prompt(
+        verdict.action, payload.source, verdict.assessment.score,
+        [item.entity_type for item in verdict.sanitized.replacements],
+    )
 
     audit_action = {
         "BLOCK": "Extension blocked prompt",
