@@ -13,6 +13,12 @@ from detection_engine.models.response import DetectionResponse
 # business re-appearing in it.
 RESTORABLE_CATEGORIES = {Category.PII}
 
+# A place or company name on its own ("What is the capital of Sri Lanka?") is
+# not sensitive; the NER model marks such hits LOW. Replacing them would make
+# ordinary questions unreadable, so they are left in place. They still count
+# towards the risk score when they appear next to other personal data.
+KEEP_WHEN_LOW_RISK = {"LOCATION", "ORGANIZATION"}
+
 
 class Replacement(BaseModel):
     placeholder: str
@@ -54,7 +60,9 @@ class PromptSanitizer:
                 entity for entity in detection.detected_entities
                 # Document-level findings (source code) describe the whole
                 # prompt; they drive risk and policy, not span replacement.
-                if entity.category != Category.SOURCE_CODE and entity.end > entity.start
+                if entity.category != Category.SOURCE_CODE
+                and entity.end > entity.start
+                and not (entity.entity_type in KEEP_WHEN_LOW_RISK and entity.risk_level.value == "LOW")
             ),
             key=lambda entity: entity.start,
         )

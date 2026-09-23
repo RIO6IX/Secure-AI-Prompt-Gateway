@@ -468,7 +468,7 @@ class PromptVerdict(BaseModel):
     def audit_status(self) -> str:
         if self.blocked:
             return "Blocked"
-        return "Sanitized" if self.sanitized.changed or self.detection.contains_sensitive_data else "Allowed"
+        return "Sanitized" if self.action == "SANITIZE" else "Allowed"
 
     @property
     def policy_rule(self) -> str:
@@ -510,8 +510,10 @@ def evaluate_prompt(
     else:
         action = policy.action.value
         reason = policy.reason
-    if action == RecommendedAction.SANITIZE.value and not detection.contains_sensitive_data:
+    if action == RecommendedAction.SANITIZE.value and not sanitized.changed and assessment.level.value == "LOW":
+        # Nothing left to replace and nothing risky found: sanitizing would be a no-op.
         action = RecommendedAction.ALLOW.value
+        reason = "No sensitive values needed to be removed."
     verdict = PromptVerdict(
         detection=detection,
         sanitized=sanitized,

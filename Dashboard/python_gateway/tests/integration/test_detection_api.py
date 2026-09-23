@@ -464,3 +464,12 @@ def test_gateway_restores_pii_in_model_reply_only(tmp_path, monkeypatch) -> None
     assert body["assistantMessage"] == "Draft: Hello nimal@company.lk, your request was received."
     assert body["policyDecision"] == "SANITIZE"
     assert body["riskAssessment"]["factors"][0]["entity_type"] == "EMAIL_ADDRESS"
+
+
+def test_ordinary_question_with_a_place_name_is_allowed(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "place.name@example.com")
+
+    body = client.post("/api/v1/sanitize", headers=headers, json={"prompt": "What is the capital of Sri Lanka?"}).json()
+
+    assert body["decision"] == "ALLOW"
+    assert body["sanitizedPrompt"] == "What is the capital of Sri Lanka?"

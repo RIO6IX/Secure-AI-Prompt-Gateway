@@ -99,3 +99,10 @@ def test_score_is_capped_and_factors_explain_it() -> None:
     assert assessment.level == RiskLevel.CRITICAL
     assert assessment.factors[0].points >= assessment.factors[-1].points
     assert "risk (100/100)" in assessment.summary
+
+
+def test_place_names_alone_are_not_redacted() -> None:
+    _, sanitized, _ = run("What is the capital of Sri Lanka?")
+
+    assert sanitized.text == "What is the capital of Sri Lanka?"
+    assert not sanitized.changed
