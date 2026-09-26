@@ -493,6 +493,22 @@ def test_gateway_reports_answered_model_status(tmp_path, monkeypatch) -> None:
     assert events[0]["action"] == "Prompt allowed and sent to local Ollama"
 
 
+def test_clean_prompt_with_a_place_name_is_logged_as_allowed(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "place.audit@example.com")
+
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
+        return "Paris.", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    body = client.post("/gateway/chat", headers=headers, json={"prompt": "What is the capital of France?"}).json()
+
+    assert body["policyDecision"] == "ALLOW"
+    events = client.get("/audit/events?actor=place.audit@example.com", headers=headers).json()
+    assert events[0]["status"] == "Allowed"
+    assert events[0]["action"] == "Prompt allowed and sent to local Ollama"
+    assert events[0]["maskedOutput"] == "What is the capital of France?"
+
+
 def test_gateway_reports_unavailable_model_without_crashing(tmp_path, monkeypatch) -> None:
     headers = register_admin(tmp_path, monkeypatch, "model.down@example.com")
     sent: list[str] = []

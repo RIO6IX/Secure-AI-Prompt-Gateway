@@ -43,6 +43,7 @@ from prompt_sanitizer import (
     load_risk_policy,
 )
 from prompt_sanitizer.metrics import SanitizerMetrics
+from prompt_sanitizer.sanitizer import KEEP_WHEN_LOW_RISK
 from security_policy import PolicyAction, PolicyDecision, PolicyEngine, PolicyInput, UserContext
 
 
@@ -651,34 +652,48 @@ def verdict_audit_event(
     )
 
 
-def redact_from_detection(prompt: str, detection: DetectionResponse) -> str:
+def redact_from_detection(prompt: str, entities: list[DetectedEntity]) -> str:
     sanitized = prompt
-    for entity in sorted(detection.detected_entities, key=lambda item: item.start, reverse=True):
+    for entity in sorted(entities, key=lambda item: item.start, reverse=True):
         replacement = "****"
         sanitized = sanitized[: entity.start] + replacement + sanitized[entity.end :]
     return sanitized
 
 
-def sanitize_audit_output(value: str) -> tuple[str, DetectionResponse | None]:
+def audit_sensitive_entities(detection: DetectionResponse) -> list[DetectedEntity]:
+    """Findings the audit boundary must redact.
+
+    A low-risk place or company name is left in the prompt on purpose by the
+    sanitizer, so it must not relabel a clean prompt as sanitized here either.
+    """
+    return [
+        entity
+        for entity in detection.detected_entities
+        if not (entity.entity_type in KEEP_WHEN_LOW_RISK and entity.risk_level.value == "LOW")
+    ]
+
+
+def sanitize_audit_output(value: str) -> tuple[str, DetectionResponse | None, list[DetectedEntity]]:
     if not value.strip():
-        return value, None
+        return value, None, []
     try:
         detection = get_detection_engine().detect(DetectRequest(prompt=value))
     except DetectionError:
-        return value, None
-    if not detection.contains_sensitive_data:
-        return value, detection
-    return redact_from_detection(value, detection), detection
+        return value, None, []
+    entities = audit_sensitive_entities(detection)
+    if not entities:
+        return value, detection, []
+    return redact_from_detection(value, entities), detection, entities
 
 
 def harden_audit_event(event: AuditEventIn) -> AuditEventIn:
-    sanitized_output, detection = sanitize_audit_output(event.maskedOutput)
-    if not detection or not detection.contains_sensitive_data:
+    sanitized_output, detection, entities = sanitize_audit_output(event.maskedOutput)
+    if not detection or not entities:
         return event
 
     updates: dict[str, object] = {"maskedOutput": sanitized_output}
     if sanitized_output != event.maskedOutput:
-        primary = primary_entity(detection)
+        primary = max(entities, key=lambda entity: (RISK_RANK[entity.risk_level.value], entity.confidence))
         updates.update(
             {
                 "risk": title_case_risk(detection.overall_risk.value),
