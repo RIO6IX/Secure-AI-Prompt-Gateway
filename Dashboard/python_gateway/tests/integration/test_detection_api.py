@@ -127,6 +127,7 @@ def test_cors_allows_admin_delete_preflight() -> None:
 
 
 def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "block")
     monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
     gateway_app.init_db()
 
@@ -179,6 +180,7 @@ def test_gateway_masks_sensitive_prompt_and_filterable_audit_logs(tmp_path, monk
 
 
 def test_gateway_blocks_short_password_before_forwarding(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "block")
     monkeypatch.setattr(gateway_app, "DB_PATH", tmp_path / "audit.sqlite3")
     gateway_app.init_db()
 
@@ -326,6 +328,7 @@ def register_admin(tmp_path, monkeypatch, email: str) -> dict[str, str]:
 
 
 def test_inspect_uses_detection_engine_and_token_identity(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "block")
     headers = register_admin(tmp_path, monkeypatch, "inspect.admin@example.com")
 
     response = client.post(
@@ -424,6 +427,7 @@ def test_sanitize_endpoint_returns_placeholders_and_writes_one_audit_record(tmp_
 
 
 def test_sanitize_endpoint_returns_no_text_for_blocked_prompt(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "block")
     headers = register_admin(tmp_path, monkeypatch, "extension.block@example.com")
 
     response = client.post(
@@ -439,6 +443,7 @@ def test_sanitize_endpoint_returns_no_text_for_blocked_prompt(tmp_path, monkeypa
 
 
 def test_critical_combined_risk_blocks_even_when_each_rule_only_sanitizes(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "block")
     headers = register_admin(tmp_path, monkeypatch, "risk.escalation@example.com")
     prompt = (
         "Refund Priya Fernando, NIC 199512345678, card 4539 1488 0343 6467 cvv 123, "
@@ -534,6 +539,7 @@ def test_gateway_reports_unavailable_model_without_crashing(tmp_path, monkeypatc
 
 
 def test_blocked_prompt_never_reaches_the_model_and_explains_why(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "block")
     headers = register_admin(tmp_path, monkeypatch, "blocked.status@example.com")
 
     async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
@@ -549,6 +555,67 @@ def test_blocked_prompt_never_reaches_the_model_and_explains_why(tmp_path, monke
     assert body["blockReason"]
     assert body["modelError"] is None
     assert "AKIAZ7Q2WJ5K3LMNOPQR" not in body["sanitizedPrompt"]
+
+
+def test_mask_mode_forwards_credentials_as_placeholders(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "mask")
+    headers = register_admin(tmp_path, monkeypatch, "mask.secrets@example.com")
+    sent: list[str] = []
+
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
+        sent.append(prompt)
+        return "Check that [AWS_ACCESS_KEY_1] has the right IAM policy.", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLEKEY"
+    body = client.post(
+        "/gateway/chat",
+        headers=headers,
+        json={"prompt": f"Why does this fail? aws_access_key_id = AKIAZ7Q2WJ5K3LMNOPQR aws_secret_access_key = {secret}"},
+    ).json()
+
+    assert body["policyDecision"] == "SANITIZE"
+    assert body["modelStatus"] == "answered"
+    assert len(sent) == 1
+    assert "AKIAZ7Q2WJ5K3LMNOPQR" not in sent[0] and secret not in sent[0]
+    assert "[AWS_ACCESS_KEY_1]" in sent[0]
+    # Secrets are never restored into the reply.
+    assert "AKIAZ7Q2WJ5K3LMNOPQR" not in body["assistantMessage"]
+    events = client.get("/audit/events?actor=mask.secrets@example.com", headers=headers).json()
+    assert events[0]["status"] == "Sanitized"
+    assert "AKIAZ7Q2WJ5K3LMNOPQR" not in events[0]["maskedOutput"]
+
+
+@pytest.mark.parametrize("prompt, secret", [
+    ("password = 1234", "1234"),
+    ("-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBGRz\n-----END PGP PRIVATE KEY BLOCK-----", "lQOYBGRz"),
+    (
+        "Refund Priya Fernando, NIC 199512345678, card 4539 1488 0343 6467 cvv 123, "
+        "IBAN GB82WEST12345698765432, phone +94 77 123 4567, email priya@acme.lk",
+        "4539 1488 0343 6467",
+    ),
+])
+def test_mask_mode_never_blocks_but_never_forwards_the_value(tmp_path, monkeypatch, prompt: str, secret: str) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "mask")
+    headers = register_admin(tmp_path, monkeypatch, "mask.all@example.com")
+    sent: list[str] = []
+
+    async def fake_ollama(text: str, history=None) -> tuple[str, bool]:
+        sent.append(text)
+        return "ok", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    body = client.post("/gateway/chat", headers=headers, json={"prompt": prompt}).json()
+
+    assert body["policyDecision"] == "SANITIZE"
+    assert len(sent) == 1 and secret not in sent[0]
+
+
+def test_policies_list_the_credential_rule_as_masking_in_mask_mode(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "mask")
+    headers = register_admin(tmp_path, monkeypatch, "mask.policies@example.com")
+    policies = client.get("/policies", headers=headers).json()["policies"]
+    assert any(policy["id"] == "POL-CRED-001" and policy["action"] == "SANITIZE" for policy in policies)
 
 
 def test_gateway_restore_mode_returns_the_requesters_own_values(tmp_path, monkeypatch) -> None:
@@ -600,6 +667,7 @@ def test_ordinary_question_with_a_place_name_is_allowed(tmp_path, monkeypatch) -
 
 
 def test_repeated_blocked_attempts_escalate_the_next_sensitive_prompt(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "block")
     headers = register_admin(tmp_path, monkeypatch, "repeat.probe@example.com")
     for attempt in ("password = Sup3rS3cret!", "password = Sup3rS3cret!2"):
         assert client.post("/api/v1/sanitize", headers=headers, json={"prompt": attempt}).json()["decision"] == "BLOCK"
@@ -659,6 +727,7 @@ def test_conversation_keeps_placeholders_consistent_and_sends_sanitized_history(
 
 
 def test_blocked_prompt_does_not_enter_the_conversation(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "block")
     headers = register_admin(tmp_path, monkeypatch, "blocked.turn@example.com")
     calls: list[list[dict[str, str]]] = []
 
@@ -701,6 +770,7 @@ def test_conversations_are_private_and_can_be_ended(tmp_path, monkeypatch) -> No
 
 
 def test_metrics_expose_component_two_counters_without_prompt_content(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(gateway_app, "SENSITIVE_DATA_ACTION", "block")
     headers = register_admin(tmp_path, monkeypatch, "metrics.user@example.com")
 
     async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
