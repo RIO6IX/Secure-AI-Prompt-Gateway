@@ -163,6 +163,7 @@ Copy `.env.example` to `.env` and pass it to uvicorn with `--env-file ../.env`. 
 - `ENABLE_METRICS=true`
 - `SPACY_MODEL=en_core_web_sm`
 - `RISK_HISTORY_MINUTES=60` (recent blocked prompts raise the next sensitive prompt's risk)
+- `SENSITIVE_DATA_ACTION=mask` (`mask` replaces credentials with placeholders and forwards the prompt, even at CRITICAL risk; `block` refuses to forward credentials or critical-risk prompts)
 - `REPLY_PII_MODE=mask` (`mask` shows n***@company.lk in model replies, `restore` shows the requester's own values)
 - `RISK_POLICY_FILE` (optional JSON overriding risk weights and thresholds; see `python_gateway/risk_policy.example.json`)
 - `CONVERSATION_TTL_MINUTES=30`, `CONVERSATION_MAX_MESSAGES=20` (in-memory chat context)

@@ -77,6 +77,9 @@ PROMPT_RATE_LIMIT_PER_MINUTE = int(os.getenv("PROMPT_RATE_LIMIT_PER_MINUTE", "60
 # model used placeholders. "restore": the requester sees their original values.
 # Sensitive data the model generates itself is masked in both modes.
 REPLY_PII_MODE = os.getenv("REPLY_PII_MODE", "mask").strip().lower()
+# "mask" (default): credentials and critical-risk prompts are masked with
+# placeholders and still forwarded. "block": they are not forwarded at all.
+SENSITIVE_DATA_ACTION = os.getenv("SENSITIVE_DATA_ACTION", "mask").strip().lower()
 CONVERSATION_TTL_MINUTES = int(os.getenv("CONVERSATION_TTL_MINUTES", "30"))
 # Optional JSON file overriding risk weights/thresholds (see prompt_sanitizer/risk_policy.py).
 RISK_POLICY_FILE = os.getenv("RISK_POLICY_FILE", "").strip() or None
@@ -335,6 +338,8 @@ def validate_runtime_config() -> None:
         raise RuntimeError("JWT_SECRET must be changed before running in production")
     if ENVIRONMENT in {"production", "prod"} and len(JWT_SECRET) < 32:
         raise RuntimeError("JWT_SECRET must be at least 32 characters in production")
+    if SENSITIVE_DATA_ACTION not in {"mask", "block"}:
+        raise RuntimeError("SENSITIVE_DATA_ACTION must be 'mask' or 'block'")
     if not CORS_ALLOWED_ORIGINS:
         raise RuntimeError("CORS_ALLOWED_ORIGINS must contain at least one allowed origin")
 
@@ -487,7 +492,7 @@ def inspect_prompt(payload: PromptInspectionIn, user: dict[str, str]) -> AuditEv
 
 
 def get_policy_engine() -> PolicyEngine:
-    return PolicyEngine()
+    return PolicyEngine(mask_secrets=SENSITIVE_DATA_ACTION == "mask")
 
 
 PROMPT_SANITIZER = PromptSanitizer()
@@ -601,6 +606,10 @@ def evaluate_prompt(
         )
     )
     risk_action = assessment.recommended_action.value
+    if SENSITIVE_DATA_ACTION == "mask" and risk_action == RecommendedAction.BLOCK.value:
+        # Every detected value is replaced before forwarding, so a critical
+        # score is reported and audited but does not stop the prompt.
+        risk_action = RecommendedAction.SANITIZE.value
     if ACTION_STRICTNESS[risk_action] > ACTION_STRICTNESS[policy.action.value]:
         action = risk_action
         reason = assessment.summary

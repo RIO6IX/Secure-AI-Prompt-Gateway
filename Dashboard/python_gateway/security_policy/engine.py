@@ -52,7 +52,10 @@ class PolicyDecision(BaseModel):
 class PolicyEngine:
     """Component 03: Security Policy & Access Control Engine."""
 
-    def __init__(self) -> None:
+    def __init__(self, mask_secrets: bool = False) -> None:
+        # mask_secrets: credentials are replaced with placeholders and the
+        # prompt is forwarded, instead of the prompt being blocked.
+        self.mask_secrets = mask_secrets
         self.rules = [
             PolicyRule(
                 rule_id="POL-RBAC-001",
@@ -63,9 +66,13 @@ class PolicyEngine:
             ),
             PolicyRule(
                 rule_id="POL-CRED-001",
-                name="Block credential and secret exposure",
-                action=PolicyAction.BLOCK,
-                description="Critical credential material must not be forwarded to an AI model even after masking.",
+                name="Mask credential and secret values" if mask_secrets else "Block credential and secret exposure",
+                action=PolicyAction.SANITIZE if mask_secrets else PolicyAction.BLOCK,
+                description=(
+                    "Credential values are replaced with placeholders before the prompt is forwarded."
+                    if mask_secrets
+                    else "Critical credential material must not be forwarded to an AI model even after masking."
+                ),
                 standards=["ISO/IEC 27001 risk treatment", "PCI DSS protect authentication data"],
             ),
             PolicyRule(
@@ -145,6 +152,15 @@ class PolicyEngine:
             "DATABASE_CONNECTION_STRING",
             "PRIVATE_KEY",
         }
+        if (critical_secret or entity_types.intersection(block_secret_types)) and self.mask_secrets:
+            return self._decision(
+                "POL-CRED-001",
+                reason="Credential or secret material was detected and replaced with placeholders.",
+                allowed_to_forward=policy_input.forward_requested,
+                requires_sanitization=True,
+                audit_status="Sanitized",
+                recommendation="Only the masked prompt is forwarded. Rotate the exposed secrets if they are real.",
+            )
         if critical_secret or entity_types.intersection(block_secret_types):
             return self._decision(
                 "POL-CRED-001",

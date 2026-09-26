@@ -3,9 +3,11 @@ from detection_engine.models.request import DetectRequest
 from security_policy import PolicyAction, PolicyEngine, PolicyInput, UserContext
 
 
-def evaluate_prompt(prompt: str, *, role: str = "admin", forward_requested: bool = True):
+def evaluate_prompt(
+    prompt: str, *, role: str = "admin", forward_requested: bool = True, mask_secrets: bool = False,
+):
     detector = SensitiveDataDetectionEngine()
-    policy = PolicyEngine()
+    policy = PolicyEngine(mask_secrets=mask_secrets)
     detection = detector.detect(DetectRequest(prompt=prompt))
     return policy.evaluate(
         PolicyInput(
@@ -43,6 +45,22 @@ def test_blocks_credential_material() -> None:
     assert decision.allowed_to_forward is False
     assert decision.requires_sanitization is True
     assert decision.rule_id == "POL-CRED-001"
+
+
+def test_masks_credential_material_when_configured() -> None:
+    decision = evaluate_prompt("My API key is sk-proj-ABC1234567890secret, please fix this.", mask_secrets=True)
+
+    assert decision.action == PolicyAction.SANITIZE
+    assert decision.allowed_to_forward is True
+    assert decision.requires_sanitization is True
+    assert decision.rule_id == "POL-CRED-001"
+
+
+def test_mask_mode_still_blocks_read_only_roles() -> None:
+    decision = evaluate_prompt("Summarise this safe text.", role="auditor", mask_secrets=True)
+
+    assert decision.action == PolicyAction.BLOCK
+    assert decision.allowed_to_forward is False
 
 
 def test_sanitizes_personal_data_when_forwarding_is_requested() -> None:
