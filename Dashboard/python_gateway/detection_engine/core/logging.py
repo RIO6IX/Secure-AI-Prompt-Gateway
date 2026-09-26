@@ -24,7 +24,11 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
-        for key in ("request_id", "endpoint", "prompt_length", "entity_count", "overall_risk", "processing_time_ms"):
+        for key in (
+            "request_id", "endpoint", "prompt_length", "entity_count", "overall_risk", "processing_time_ms",
+            # security events (OWASP A09)
+            "event", "actor", "client_ip", "path", "method", "status_code", "role", "target",
+        ):
             if hasattr(record, key):
                 payload[key] = getattr(record, key)
         return json.dumps(payload, separators=(",", ":"))
