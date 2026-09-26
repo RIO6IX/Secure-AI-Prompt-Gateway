@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -66,6 +67,10 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 # Generation on a CPU can take minutes for long answers or long conversations.
 OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
+# OWASP LLM10 (unbounded consumption): cap the reply length and how many
+# generations run at once, so one user cannot tie up the model for everyone.
+OLLAMA_MAX_OUTPUT_TOKENS = int(os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "1024"))
+OLLAMA_MAX_CONCURRENT = int(os.getenv("OLLAMA_MAX_CONCURRENT", "2"))
 MAX_PROMPT_CHARS = int(os.getenv("MAX_PROMPT_CHARS", "50000"))
 PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "12"))
 PASSWORD_PBKDF2_ITERATIONS = int(os.getenv("PASSWORD_PBKDF2_ITERATIONS", "310000"))
@@ -103,7 +108,27 @@ app = FastAPI(
     version="0.2.0",
     description="Python gateway service that masks sensitive prompt data and writes real audit events.",
     lifespan=lifespan,
+    # OWASP A05: do not publish the API map in production.
+    docs_url=None if ENVIRONMENT in {"production", "prod"} else "/docs",
+    redoc_url=None if ENVIRONMENT in {"production", "prod"} else "/redoc",
+    openapi_url=None if ENVIRONMENT in {"production", "prod"} else "/openapi.json",
 )
+SECURITY_LOGGER = logging.getLogger("secure_gateway.security")
+
+
+def client_ip(request: Request | None) -> str:
+    return request.client.host if request and request.client else "unknown"
+
+
+def security_event(
+    event: str, *, actor: str = "-", request: Request | None = None, level: int = logging.INFO, **details: object,
+) -> None:
+    """Record an authentication or access-control event (OWASP A09, Logging Cheat Sheet).
+
+    Only who/what/where/outcome is logged, never passwords, tokens or prompt
+    text; the JSON formatter escapes CR/LF so values cannot forge log lines.
+    """
+    SECURITY_LOGGER.log(level, event, extra={"event": event, "actor": actor, "client_ip": client_ip(request), **details})
 
 app.add_middleware(
     CORSMiddleware,
@@ -122,15 +147,34 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("x-frame-options", "DENY")
     response.headers.setdefault("referrer-policy", "no-referrer")
     response.headers.setdefault("permissions-policy", "camera=(), microphone=(), geolocation=()")
-    if request.url.path.startswith(("/auth", "/audit", "/reports", "/gateway")):
+    if not request.url.path.startswith(("/docs", "/redoc")):
+        # JSON-only API: nothing it returns should ever load scripts or be framed.
+        response.headers.setdefault("content-security-policy", "default-src 'none'; frame-ancestors 'none'")
+    if ENVIRONMENT in {"production", "prod"}:
+        response.headers.setdefault("strict-transport-security", "max-age=31536000; includeSubDomains")
+    if request.url.path.startswith(("/auth", "/audit", "/reports", "/gateway", "/api/v1/sanitize", "/users", "/admin")):
         response.headers.setdefault("cache-control", "no-store")
+    # A failed login already logs auth.login_failed / auth.login_locked.
+    if response.status_code in {401, 403, 429} and request.url.path != "/auth/login":
+        token = request.headers.get("authorization", "")
+        payload = verify_token(token.split(" ", 1)[1]) if token.lower().startswith("bearer ") else None
+        security_event(
+            {401: "auth.unauthenticated", 403: "access.denied", 429: "rate_limited"}[response.status_code],
+            actor=str(payload["email"]) if payload else "-",
+            request=request,
+            level=logging.WARNING,
+            path=request.url.path,
+            method=request.method,
+            status_code=response.status_code,
+        )
     return response
 
 
 class RegisterIn(BaseModel):
-    name: str = Field(..., examples=["Security Admin"])
-    email: str = Field(..., examples=["sec.admin@company.com"])
-    password: str = Field(..., min_length=8)
+    name: str = Field(..., max_length=120, examples=["Security Admin"])
+    email: str = Field(..., max_length=254, examples=["sec.admin@company.com"])
+    # The upper bound stops a multi-megabyte password from pinning a worker in PBKDF2.
+    password: str = Field(..., min_length=8, max_length=256)
 
 
 class CreateUserIn(RegisterIn):
@@ -138,8 +182,8 @@ class CreateUserIn(RegisterIn):
 
 
 class LoginIn(BaseModel):
-    email: str
-    password: str
+    email: str = Field(..., max_length=254)
+    password: str = Field(..., max_length=256)
 
 
 class AuthOut(BaseModel):
@@ -148,10 +192,10 @@ class AuthOut(BaseModel):
 
 
 class PromptInspectionIn(BaseModel):
-    department: str = "Unknown"
-    service: str = Field(..., examples=["ChatGPT Enterprise"])
+    department: str = Field(default="Unknown", max_length=120)
+    service: str = Field(..., max_length=120, examples=["ChatGPT Enterprise"])
     prompt: str = Field(..., max_length=MAX_PROMPT_CHARS)
-    source: str = "python-gateway"
+    source: str = Field(default="python-gateway", max_length=60)
 
 
 class GatewayPromptIn(BaseModel):
@@ -161,9 +205,9 @@ class GatewayPromptIn(BaseModel):
         max_length=MAX_PROMPT_CHARS,
         examples=["Please fix this API issue. My API key is sk_live_ABC123456789"],
     )
-    service: str = "Ollama Qwen2.5"
-    department: str = "Engineering"
-    source: str = "secure-chat-gateway"
+    service: str = Field(default="Ollama Qwen2.5", max_length=120)
+    department: str = Field(default="Engineering", max_length=120)
+    source: str = Field(default="secure-chat-gateway", max_length=60)
     forward_to_ollama: bool = True
     # Continue an earlier chat; omit to start a new conversation.
     conversation_id: str | None = Field(default=None, max_length=64)
@@ -338,6 +382,8 @@ def validate_runtime_config() -> None:
         raise RuntimeError("JWT_SECRET must be changed before running in production")
     if ENVIRONMENT in {"production", "prod"} and len(JWT_SECRET) < 32:
         raise RuntimeError("JWT_SECRET must be at least 32 characters in production")
+    if OLLAMA_MAX_OUTPUT_TOKENS < 1 or OLLAMA_MAX_CONCURRENT < 1:
+        raise RuntimeError("OLLAMA_MAX_OUTPUT_TOKENS and OLLAMA_MAX_CONCURRENT must be at least 1")
     if SENSITIVE_DATA_ACTION not in {"mask", "block"}:
         raise RuntimeError("SENSITIVE_DATA_ACTION must be 'mask' or 'block'")
     if not CORS_ALLOWED_ORIGINS:
@@ -379,6 +425,7 @@ def enforce_login_throttle(email: str, request: Request) -> str:
     key = login_throttle_key(email, request)
     attempts = prune_login_failures(key)
     if len(attempts) >= LOGIN_MAX_ATTEMPTS:
+        security_event("auth.login_locked", actor=email, request=request, level=logging.WARNING)
         raise HTTPException(status_code=429, detail="Too many failed login attempts. Try again later.")
     return key
 
@@ -744,9 +791,13 @@ def audit_filters(
     status: str | None,
     service: str | None,
     actor: str | None,
+    own_actor: str | None = None,
 ) -> tuple[str, list[object]]:
     clauses: list[str] = []
     params: list[object] = []
+    if own_actor:
+        clauses.append("actor = ?")
+        params.append(own_actor)
     risk = risk.strip() if risk else None
     status = status.strip() if status else None
     service = service.strip() if service else None
@@ -769,7 +820,9 @@ def audit_filters(
 
 def csv_cell(value: object) -> str:
     text = str(value or "")
-    if text.startswith(("=", "+", "-", "@", "\t", "\r")):
+    # OWASP CSV Injection: neutralise formula triggers, including ones hidden
+    # behind leading spaces or line breaks that spreadsheets skip over.
+    if text.lstrip(" \n").startswith(("=", "+", "-", "@", "\t", "\r")):
         text = f"'{text}"
     escaped = text.replace('"', '""')
     return f'"{escaped}"'
@@ -786,6 +839,9 @@ def title_case_risk(risk: str) -> RiskLevel:
     return "Low"
 
 
+OLLAMA_SLOTS = asyncio.Semaphore(OLLAMA_MAX_CONCURRENT)
+
+
 async def call_ollama(sanitized_prompt: str, history: list[dict[str, str]] | None = None) -> tuple[str, bool]:
     """Send the sanitized prompt, with the conversation's sanitized history, to Ollama."""
     system = (
@@ -799,14 +855,14 @@ async def call_ollama(sanitized_prompt: str, history: list[dict[str, str]] | Non
     # minutes, so only the read timeout is long.
     timeout = httpx.Timeout(OLLAMA_TIMEOUT_SECONDS, connect=5.0)
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with OLLAMA_SLOTS, httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
                 json={
                     "model": OLLAMA_MODEL,
                     "messages": messages,
                     "stream": False,
-                    "options": {"temperature": 0.2},
+                    "options": {"temperature": 0.2, "num_predict": OLLAMA_MAX_OUTPUT_TOKENS},
                 },
             )
             response.raise_for_status()
@@ -901,7 +957,8 @@ def health() -> dict[str, object]:
         "status": "healthy",
         "service": "python-prompt-gateway",
         "detectionEngine": detection,
-        "remoteAuditApiUrl": REMOTE_AUDIT_API_URL,
+        # Unauthenticated endpoint: report only whether forwarding is set up.
+        "remoteAuditConfigured": bool(REMOTE_AUDIT_API_URL),
         "remoteAuthConfigured": bool(REMOTE_AUDIT_BEARER_TOKEN),
         "database": DB_PATH.name,
         "time": datetime.now(timezone.utc).isoformat(),
@@ -975,7 +1032,7 @@ async def ollama_model_status() -> str:
 
 
 @app.post("/auth/register", response_model=AuthOut, status_code=201)
-def register(payload: RegisterIn) -> AuthOut:
+def register(payload: RegisterIn, request: Request) -> AuthOut:
     init_db()
     email = payload.email.strip().lower()
     name = payload.name.strip()
@@ -1004,6 +1061,7 @@ def register(payload: RegisterIn) -> AuthOut:
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="email is already registered") from exc
         row = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    security_event("auth.registered", actor=email, request=request, role=role)
     return auth_response(row)
 
 
@@ -1037,6 +1095,7 @@ def create_user(payload: CreateUserIn, authorization: str | None = Header(defaul
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="email is already registered") from exc
         row = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    security_event("admin.user_created", actor=current_user["email"], target=email, role=payload.role)
     return auth_response(row)
 
 
@@ -1054,6 +1113,7 @@ def delete_user(user_id: str, authorization: str | None = Header(default=None)) 
             raise HTTPException(status_code=400, detail="you cannot delete your own account")
         connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
+    security_event("admin.user_deleted", actor=current_user["email"], target=row["email"])
     return {"status": "deleted", "id": user_id}
 
 
@@ -1069,8 +1129,10 @@ def login(payload: LoginIn, request: Request) -> AuthOut:
         ).fetchone()
     if not row or not check_password(payload.password, row["password_hash"]):
         record_failed_login(throttle_key)
+        security_event("auth.login_failed", actor=email, request=request, level=logging.WARNING)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     clear_failed_logins(throttle_key)
+    security_event("auth.login_succeeded", actor=email, request=request)
     return auth_response(row)
 
 
@@ -1351,8 +1413,11 @@ def audit_summary(
     actor: str | None = Query(default=None),
 ) -> dict[str, object]:
     init_db()
-    get_auth_user(authorization)
-    where, params = audit_filters(risk, status, service, actor)
+    current_user = get_auth_user(authorization)
+    # OWASP A01: admins and auditors see the whole organisation, a plain user
+    # only their own prompts.
+    own_actor = None if normalize_role(current_user["role"]) in {"admin", "auditor"} else current_user["email"]
+    where, params = audit_filters(risk, status, service, actor, own_actor)
     with connect() as connection:
         events = connection.execute(f"SELECT * FROM audit_events {where} ORDER BY timestamp DESC LIMIT 100", params).fetchall()
         categories = connection.execute(f"SELECT category AS name, COUNT(*) AS value FROM audit_events {where} GROUP BY category ORDER BY value DESC", params).fetchall()

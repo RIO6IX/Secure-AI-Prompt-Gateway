@@ -214,7 +214,7 @@ export function SystemSettingsPage() {
           <div><strong>Status</strong><span>{String(health?.status ?? "Unknown")}</span></div>
           <div><strong>Service</strong><span>{String(health?.service ?? "Unknown")}</span></div>
           <div><strong>Database</strong><span>{String(health?.database ?? "Unknown")}</span></div>
-          <div><strong>Remote Audit API</strong><span>{String(health?.remoteAuditApiUrl ?? "Local only")}</span></div>
+          <div><strong>Remote Audit API</strong><span>{health?.remoteAuditConfigured ? "Configured" : "Local only"}</span></div>
           <div><strong>Remote Auth</strong><span>{String(health?.remoteAuthConfigured ?? false)}</span></div>
         </div>
       </article>
