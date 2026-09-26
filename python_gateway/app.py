@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import base64
 import hmac
-import json
 import os
 import re
 import sqlite3
-import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -16,11 +14,18 @@ from uuid import uuid4
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+try:
+    from .security import SecurityService
+except ImportError:
+    from security import SecurityService
 
 
 RiskLevel = Literal["Low", "Medium", "High", "Critical"]
-Role = Literal["admin", "auditor", "user"]
+Role = Literal["admin", "auditor", "user", "approver"]
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "audit_logs.sqlite3"
@@ -29,7 +34,6 @@ REMOTE_AUDIT_API_URL = os.getenv(
     "",
 )
 REMOTE_AUDIT_BEARER_TOKEN = os.getenv("REMOTE_AUDIT_BEARER_TOKEN", "")
-JWT_SECRET = os.getenv("JWT_SECRET", "local-dev-change-this-secret")
 
 app = FastAPI(
     title="Secure AI Prompt Gateway Python Service",
@@ -39,17 +43,17 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173").split(","),
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
 
 
 class RegisterIn(BaseModel):
-    name: str = Field(..., examples=["Security Admin"])
-    email: str = Field(..., examples=["sec.admin@company.com"])
-    password: str = Field(..., min_length=8)
+    name: str = Field(..., min_length=1, max_length=120, examples=["Security Admin"])
+    email: str = Field(..., min_length=3, max_length=254, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$", examples=["sec.admin@company.com"])
+    password: str = Field(..., min_length=12, max_length=128)
 
 
 class CreateUserIn(RegisterIn):
@@ -57,8 +61,8 @@ class CreateUserIn(RegisterIn):
 
 
 class LoginIn(BaseModel):
-    email: str
-    password: str
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=128)
 
 
 class AuthOut(BaseModel):
@@ -66,11 +70,20 @@ class AuthOut(BaseModel):
     user: dict[str, str]
 
 
+class PasswordChangeIn(BaseModel):
+    current_password: str = Field(max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
+
+
+class PasswordResetIn(BaseModel):
+    new_password: str = Field(min_length=12, max_length=128)
+
+
 class PromptInspectionIn(BaseModel):
     actor: str = Field(..., examples=["john.doe@company.com"])
     department: str = "Unknown"
     service: str = Field(..., examples=["ChatGPT Enterprise"])
-    prompt: str
+    prompt: str = Field(min_length=1, max_length=10000)
     source: str = "python-gateway"
 
 
@@ -97,56 +110,46 @@ class AuditEvent(AuditEventIn):
     remoteId: str | None = None
 
 
-def b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+class InspectionResult(AuditEvent):
+    decision: str
+    send_allowed: bool
+    policy_version: int
+    approval_id: str | None = None
 
 
-def sign_token(payload: dict[str, str | int]) -> str:
-    encoded = b64url(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-    signature = hmac.new(JWT_SECRET.encode("utf-8"), encoded.encode("utf-8"), hashlib.sha256).digest()
-    return f"{encoded}.{b64url(signature)}"
-
-
-def verify_token(token: str) -> dict[str, str | int] | None:
-    try:
-        encoded, signature = token.split(".", 1)
-        expected = b64url(hmac.new(JWT_SECRET.encode("utf-8"), encoded.encode("utf-8"), hashlib.sha256).digest())
-        if not hmac.compare_digest(signature, expected):
-            return None
-        padded = encoded + "=" * (-len(encoded) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("utf-8")))
-        if int(payload.get("exp", 0)) < int(time.time()):
-            return None
-        return payload
-    except Exception:
-        return None
+@app.exception_handler(RequestValidationError)
+async def invalid_request(_request, _error):
+    # Pydantic's default response may echo raw prompts or passwords in 'input'.
+    return JSONResponse(status_code=422, content={"detail": "Invalid request fields or policy configuration"})
 
 
 def password_hash(password: str, salt: str | None = None) -> str:
     salt = salt or uuid4().hex
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000).hex()
-    return f"{salt}${digest}"
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 600_000).hex()
+    return f"600000${salt}${digest}"
 
 
 def check_password(password: str, stored: str) -> bool:
-    salt, digest = stored.split("$", 1)
-    return hmac.compare_digest(password_hash(password, salt), f"{salt}${digest}")
+    try:
+        parts = stored.split("$")
+        iterations, salt, digest = (120000, *parts) if len(parts) == 2 else (int(parts[0]), parts[1], parts[2])
+        if not 120000 <= iterations <= 1000000:
+            return False
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations).hex()
+        return hmac.compare_digest(candidate, digest)
+    except (ValueError, IndexError):
+        return False
 
 
 def get_auth_user(authorization: str | None) -> dict[str, str]:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Login required")
-    payload = verify_token(authorization.split(" ", 1)[1])
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired login")
-    return {"email": str(payload["email"]), "name": str(payload["name"]), "role": normalize_role(str(payload["role"]))}
+    return security.identity(authorization)
 
 
 def normalize_role(role: str) -> Role:
     normalized = role.strip().lower().replace("security admin", "admin")
-    if normalized in ("admin", "auditor", "user"):
+    if normalized in ("admin", "auditor", "user", "approver"):
         return normalized  # type: ignore[return-value]
-    return "user"
+    raise HTTPException(403, "Unsupported account role")
 
 
 def require_role(current_user: dict[str, str], allowed: set[Role]) -> None:
@@ -165,10 +168,19 @@ DETECTORS: list[tuple[str, str, re.Pattern[str], str]] = [
 ]
 
 
-def connect() -> sqlite3.Connection:
+@contextmanager
+def connect():
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
-    return connection
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+
+security = SecurityService(connect)
+app.include_router(security.router())
 
 
 def init_db() -> None:
@@ -186,6 +198,7 @@ def init_db() -> None:
             """
         )
         connection.execute("UPDATE users SET role = 'admin' WHERE lower(role) IN ('security admin', 'administrator')")
+        security.initialize(connection)
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS audit_events (
@@ -213,12 +226,7 @@ def init_db() -> None:
 def auth_response(row: sqlite3.Row) -> AuthOut:
     role = normalize_role(row["role"])
     user = {"name": row["name"], "email": row["email"], "role": role}
-    token = sign_token({
-        "name": row["name"],
-        "email": row["email"],
-        "role": role,
-        "exp": int(time.time()) + 60 * 60 * 12,
-    })
+    token = security.issue(row["id"])
     return AuthOut(token=token, user=user)
 
 
@@ -234,7 +242,7 @@ def inspect_prompt(payload: PromptInspectionIn) -> AuditEventIn:
     matches: list[tuple[str, str, str]] = []
 
     for category, finding, pattern, policy in DETECTORS:
-        if pattern.search(masked):
+        if pattern.search(payload.prompt):
             masked = pattern.sub(mask_value, masked)
             matches.append((category, finding, policy))
 
@@ -264,7 +272,7 @@ def inspect_prompt(payload: PromptInspectionIn) -> AuditEventIn:
         category=category,
         policyRule=policy,
         maskedOutput=masked,
-        originalPrompt=payload.prompt,
+        originalPrompt=None,
         promptHash=hashlib.sha256(payload.prompt.encode("utf-8")).hexdigest(),
         source=payload.source,
     )
@@ -280,7 +288,7 @@ async def write_remote(event: AuditEventIn) -> str | None:
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.post(
             REMOTE_AUDIT_API_URL,
-            json=event.model_dump(),
+            json=event.model_dump(exclude={"originalPrompt"}),
             headers=headers,
         )
         response.raise_for_status()
@@ -345,15 +353,8 @@ def health() -> dict[str, object]:
 @app.get("/policies")
 def policies(authorization: str | None = Header(default=None)) -> dict[str, object]:
     get_auth_user(authorization)
-    return {
-        "policies": [
-            {"name": "Block credentials and tokens", "mode": "Enforce", "owner": "Security", "enabled": True},
-            {"name": "Mask PCI data before AI submission", "mode": "Enforce", "owner": "Compliance", "enabled": True},
-            {"name": "Mask PII before AI submission", "mode": "Enforce", "owner": "Privacy", "enabled": True},
-            {"name": "Warn on source code or internal URLs", "mode": "Monitor", "owner": "Engineering", "enabled": True},
-            {"name": "Default prompt leakage policy", "mode": "Monitor", "owner": "Security", "enabled": True},
-        ]
-    }
+    policy = security.policy()
+    return {"version": policy["version"], "policies": [dict(r, mode=r["action"], owner="Security") for r in policy["rules"]]}
 
 
 @app.get("/integrations")
@@ -378,8 +379,8 @@ def register(payload: RegisterIn) -> AuthOut:
         raise HTTPException(status_code=400, detail="name and email are required")
 
     with connect() as connection:
-        count = connection.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
-        role: Role = "admin" if count == 0 else "user"
+        # Admin bootstrap is a local operator command, never public registration.
+        role: Role = "user"
         try:
             connection.execute(
                 """
@@ -401,8 +402,8 @@ def register(payload: RegisterIn) -> AuthOut:
     return auth_response(row)
 
 
-@app.post("/admin/users", response_model=AuthOut, status_code=201)
-def create_user(payload: CreateUserIn, authorization: str | None = Header(default=None)) -> AuthOut:
+@app.post("/admin/users", status_code=201)
+def create_user(payload: CreateUserIn, authorization: str | None = Header(default=None)) -> dict:
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin"})
     init_db()
@@ -430,7 +431,8 @@ def create_user(payload: CreateUserIn, authorization: str | None = Header(defaul
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="email is already registered") from exc
         row = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    return auth_response(row)
+        security.change(connection, current_user["email"], "USER_CREATED", row["id"], {"role": payload.role})
+    return {"user": {"id": row["id"], "name": row["name"], "email": row["email"], "role": row["role"]}}
 
 
 @app.delete("/admin/users/{user_id}")
@@ -446,6 +448,8 @@ def delete_user(user_id: str, authorization: str | None = Header(default=None)) 
         if row["email"] == current_user["email"]:
             raise HTTPException(status_code=400, detail="you cannot delete your own account")
         connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        connection.execute("DELETE FROM security_sessions WHERE user_id=?", (user_id,))
+        security.change(connection, current_user["email"], "USER_DELETED", user_id, {})
 
     return {"status": "deleted", "id": user_id}
 
@@ -453,14 +457,53 @@ def delete_user(user_id: str, authorization: str | None = Header(default=None)) 
 @app.post("/auth/login", response_model=AuthOut)
 def login(payload: LoginIn) -> AuthOut:
     init_db()
+    email = payload.email.strip().lower()
+    security.login_check(email)
     with connect() as connection:
         row = connection.execute(
             "SELECT * FROM users WHERE email = ?",
             (payload.email.strip().lower(),),
         ).fetchone()
-    if not row or not check_password(payload.password, row["password_hash"]):
+    valid = check_password(payload.password, row["password_hash"]) if row else check_password(payload.password, "600000$"+"0"*32+"$"+"0"*64)
+    valid = bool(valid and row and row["active"])
+    security.login_result(email, valid)
+    if not valid:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if row["password_hash"].count("$") == 1:
+        with connect() as connection:
+            connection.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash(payload.password), row["id"]))
     return auth_response(row)
+
+
+@app.post("/auth/password")
+def change_password(payload: PasswordChangeIn, authorization: str | None = Header(default=None)):
+    user = get_auth_user(authorization)
+    security.login_check(user["email"])
+    with connect() as connection:
+        row = connection.execute("SELECT password_hash FROM users WHERE id=?", (user["id"],)).fetchone()
+    valid = bool(row and check_password(payload.current_password, row[0]))
+    security.login_result(user["email"], valid)
+    if not valid:
+        raise HTTPException(400, "Current password is incorrect")
+    with connect() as connection:
+        connection.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash(payload.new_password), user["id"]))
+        connection.execute("DELETE FROM security_sessions WHERE user_id=?", (user["id"],))
+        security.change(connection, user["email"], "PASSWORD_CHANGED", user["id"], {})
+    return {"status": "changed", "message": "Sign in again"}
+
+
+@app.post("/admin/users/{user_id}/password")
+def reset_password(user_id: str, payload: PasswordResetIn, authorization: str | None = Header(default=None)):
+    user = security.require(authorization, {"admin"})
+    if user_id == user["id"]:
+        raise HTTPException(400, "Use your own password-change form")
+    with connect() as connection:
+        cursor = connection.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash(payload.new_password), user_id))
+        if cursor.rowcount != 1:
+            raise HTTPException(404, "User not found")
+        connection.execute("DELETE FROM security_sessions WHERE user_id=?", (user_id,))
+        security.change(connection, user["email"], "PASSWORD_RESET", user_id, {})
+    return {"status": "reset"}
 
 
 @app.get("/auth/me")
@@ -476,7 +519,7 @@ def users(authorization: str | None = Header(default=None)) -> dict[str, object]
     with connect() as connection:
         rows = connection.execute(
             """
-            SELECT u.id, u.name, u.email, u.role, u.created_at AS createdAt,
+            SELECT u.id, u.name, u.email, u.role, u.active, u.created_at AS createdAt,
                    COUNT(a.id) AS promptCount,
                    SUM(CASE WHEN a.status = 'Blocked' THEN 1 ELSE 0 END) AS blockedCount
             FROM users u
@@ -488,17 +531,37 @@ def users(authorization: str | None = Header(default=None)) -> dict[str, object]
     return {"users": [dict(row) for row in rows]}
 
 
-@app.post("/inspect", response_model=AuditEvent)
+@app.post("/inspect", response_model=InspectionResult)
 async def inspect_and_log(
     payload: PromptInspectionIn,
     authorization: str | None = Header(default=None),
-) -> AuditEvent:
+) -> InspectionResult:
     init_db()
     current_user = get_auth_user(authorization)
-    require_role(current_user, {"admin"})
+    security.precheck(current_user, payload.service)
+    payload = payload.model_copy(update={"actor": current_user["email"]})
     event = inspect_prompt(payload)
+    categories = sorted({category for category, _, pattern, _ in DETECTORS if pattern.search(payload.prompt)})
+    decision, reason, version = security.evaluate(current_user, payload.service, categories, event.riskScore)
+    # Consume only the existing detector's spans; masking remains Component 2's job.
+    # Full replacement is required for the policy-controlled outbound preview.
+    safe = payload.prompt
+    spans = sorted((m.start(), m.end()) for _, _, pattern, _ in DETECTORS for m in pattern.finditer(payload.prompt))
+    merged = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    for start, end in reversed(merged):
+        safe = safe[:start] + "[REDACTED]" + safe[end:]
+    approval_id = security.request_approval(current_user, payload.service, safe, version) if decision == "REQUIRE_APPROVAL" else None
+    event = event.model_copy(update={"policyRule": reason, "maskedOutput": "" if decision == "BLOCK" else safe,
+                                    "status": {"ALLOW": "Allowed", "SANITIZE": "Sanitized", "BLOCK": "Blocked", "REQUIRE_APPROVAL": "Pending approval"}[decision],
+                                    "action": decision})
     remote_id = await write_remote(event)
-    return write_local(event, remote_id)
+    audit = write_local(event, remote_id)
+    return InspectionResult(**audit.model_dump(), decision=decision, send_allowed=decision in {"ALLOW", "SANITIZE"}, policy_version=version, approval_id=approval_id)
 
 
 @app.post("/audit/events", response_model=AuditEvent, status_code=201)
@@ -509,6 +572,7 @@ async def create_audit_event(
     init_db()
     current_user = get_auth_user(authorization)
     require_role(current_user, {"admin"})
+    payload = payload.model_copy(update={"originalPrompt": None, "actor": current_user["email"]})
     remote_id = await write_remote(payload)
     return write_local(payload, remote_id)
 
@@ -549,7 +613,8 @@ def list_audit_events(authorization: str | None = Header(default=None)) -> list[
 @app.get("/audit")
 def audit_summary(authorization: str | None = Header(default=None)) -> dict[str, object]:
     init_db()
-    get_auth_user(authorization)
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin", "auditor"})
     with connect() as connection:
         events = connection.execute("SELECT * FROM audit_events ORDER BY timestamp DESC LIMIT 100").fetchall()
         categories = connection.execute("SELECT category AS name, COUNT(*) AS value FROM audit_events GROUP BY category ORDER BY value DESC").fetchall()

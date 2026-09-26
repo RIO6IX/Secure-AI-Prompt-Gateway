@@ -2,6 +2,12 @@
 
 Local company-style system for detecting sensitive data in AI prompts, masking it, and storing audit logs in SQLite.
 
+## Component 3 on the shaheed branch
+
+Security policy, sessions, RBAC and approvals are documented in [Shaheed's proposal section](docs/COMPONENT3_PROPOSAL.md) and [setup, demonstration and integration guide](docs/COMPONENT3_DEMO.md).
+
+The first administrator must be created locally with `python -m python_gateway.bootstrap_admin`. Public registration creates general users only. Existing users must sign in again after upgrading to the new session system. Use `/security` for prompt checks, approvals, password changes and policy administration. This branch does not send prompts to external AI providers.
+
 ## Database
 
 This project uses **SQLite** through the FastAPI backend.
@@ -51,7 +57,8 @@ The frontend reads the local backend at `http://localhost:8000` by default. To u
 
 - `admin`: all privileges, including creating users and writing audit events
 - `auditor`: read-only audit logs and report export
-- `user`: read-only dashboard summary
+- `user`: submit prompts and manage own approval requests
+- `approver`: submit prompts and review other users' approval requests
 
 ## Test Prompt
 

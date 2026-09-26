@@ -68,7 +68,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         <div className="auth-copy">
           <p>{isRegister ? "Protected registration" : "Protected access"}</p>
           <h1>{isRegister ? "Create your secure workspace account" : "Sign in to your secure workspace"}</h1>
-          <span>{isRegister ? "The first registered account becomes the local administrator." : "Prompts are inspected locally before approved content can reach external AI."}</span>
+          <span>{isRegister ? "Registration creates a standard user account. Administrators assign elevated roles separately." : "Prompts are inspected locally before approved content can reach external AI."}</span>
         </div>
 
         <form onSubmit={submit}>
@@ -84,7 +84,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
           </label>
           <label>
             Password
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Minimum 8 characters" minLength={8} autoComplete={isRegister ? "new-password" : "current-password"} required />
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={isRegister ? "Minimum 12 characters" : "Password"} minLength={isRegister ? 12 : 1} maxLength={128} autoComplete={isRegister ? "new-password" : "current-password"} required />
           </label>
           {error ? <div className="backend-error">{error}</div> : null}
           <button type="submit" disabled={loading}>
