@@ -4,29 +4,26 @@ import test from "node:test";
 
 const templateRoot = new URL("../", import.meta.url);
 
-test("dashboard is wired to the audit backend instead of mock data", async () => {
-  const [page, dashboard, backend, hosting] = await Promise.all([
+test("secure chat is wired to the inspection backend instead of mock data", async () => {
+  const [page, chat, backend, hosting] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/components/AuditDashboard.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/SecureChatWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../python_gateway/app.py", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /<AuditDashboard \/>/);
-  assert.match(dashboard, /API_BASE_URL/);
-  assert.match(dashboard, /apiFetch<AuditResponse>\("\/audit"\)/);
-  assert.match(dashboard, /\/inspect/);
-  assert.match(dashboard, /\/reports\/export/);
-  assert.match(dashboard, /API_BASE_URL/);
-  assert.match(dashboard, /TOKEN_KEY/);
-  assert.doesNotMatch(dashboard, /Ingest Test Event|dashboard-live-ingest|sk-proj-demo-secret-value/);
-  assert.match(dashboard, /No records in the backend yet/);
-  assert.match(dashboard, /Prompt Monitor/);
-  assert.match(dashboard, /setActiveView/);
-  assert.match(dashboard, /window\.location\.assign\("\/audit-logs"\)/);
-  assert.match(dashboard, /window\.location\.assign\("\/system-settings"\)/);
-  assert.match(dashboard, /window\.location\.assign\("\/admin"\)/);
-  assert.doesNotMatch(dashboard, /12,842|john\.doe@company\.com|API key detected in prompt/i);
+  assert.match(page, /<SecureChatWorkspace \/>/);
+  assert.match(chat, /API_BASE_URL/);
+  assert.match(chat, /\/inspect/);
+  assert.match(chat, /TOKEN_KEY/);
+  assert.match(chat, /authHeaders/);
+  assert.match(chat, /New secure chat/);
+  assert.match(chat, /How can I help securely\?/);
+  assert.match(chat, /Clear current chat/);
+  assert.match(chat, /href="\/audit-logs"/);
+  assert.match(chat, /status === "Blocked"/);
+  assert.match(chat, /status === "Sanitized"/);
+  assert.doesNotMatch(chat, /Ingest Test Event|dashboard-live-ingest|sk-proj-demo-secret-value/);
 
   assert.match(backend, /DB_PATH = BASE_DIR \/ "audit_logs.sqlite3"/);
   assert.match(backend, /CREATE TABLE IF NOT EXISTS audit_events/);
@@ -48,6 +45,7 @@ test("separate audit, settings, and admin pages exist", async () => {
   assert.match(adminPage, /<AdminPanelPage \/>/);
   assert.match(standalone, /\/admin\/users/);
   assert.match(standalone, /method: "DELETE"/);
+  assert.match(standalone, /method: "PATCH"/);
   assert.match(standalone, /Delete user/);
   assert.match(standalone, /admin - all privileges/);
   assert.match(standalone, /auditor - read only audit log/);
