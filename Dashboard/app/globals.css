@@ -2057,3 +2057,71 @@ pre {
   background: #2b2111;
   color: #f5c36b;
 }
+
+.gateway-pending {
+  color: #5b6b84;
+  font-style: italic;
+}
+
+.reply-section {
+  margin-top: 0.9rem;
+}
+
+.reply-section h4 {
+  margin: 0 0 0.4rem;
+  color: #5b6b84;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.reply-section pre {
+  margin-top: 0;
+}
+
+.type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.type-chips span {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid #f5c36b;
+  border-radius: 999px;
+  background: #fff8eb;
+  color: #7a4b00;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.blocked-card {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0;
+  padding: 0.85rem;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #b42318;
+  border-radius: 0.5rem;
+  background: #fff1f2;
+  color: #7f1d1d;
+}
+
+.gateway-dark .gateway-pending,
+.gateway-dark .reply-section h4 {
+  color: #9fb2ca;
+}
+
+.gateway-dark .type-chips span {
+  border-color: #7a5a1c;
+  background: #2b2111;
+  color: #f5c36b;
+}
+
+.gateway-dark .blocked-card,
+.gateway-dark .gateway-error {
+  border-color: #7f1d1d;
+  background: #2a1114;
+  color: #fecaca;
+}
