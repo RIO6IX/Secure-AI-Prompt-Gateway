@@ -49,7 +49,7 @@ next-env.d.ts
 *.log
 __pycache__/
 *.pyc
-python_gateway/audit_logs.sqlite3
+python_gateway/audit_logs.sqlite3*
 
 # Electron packaging output
 /desktop-dist/
