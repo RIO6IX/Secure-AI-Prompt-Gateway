@@ -477,6 +477,64 @@ def test_gateway_reply_shows_masked_values_by_default(tmp_path, monkeypatch) -> 
     assert body["policyDecision"] == "SANITIZE"
 
 
+def test_gateway_reports_answered_model_status(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "answered.status@example.com")
+
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
+        return "Plants turn light into sugar.", True
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    body = client.post("/gateway/chat", headers=headers, json={"prompt": "Explain how photosynthesis works."}).json()
+
+    assert body["modelStatus"] == "answered"
+    assert body["modelError"] is None and body["blockReason"] is None
+    assert body["assistantMessage"] == "Plants turn light into sugar."
+    events = client.get("/audit/events?actor=answered.status@example.com", headers=headers).json()
+    assert events[0]["action"] == "Prompt allowed and sent to local Ollama"
+
+
+def test_gateway_reports_unavailable_model_without_crashing(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "model.down@example.com")
+    sent: list[str] = []
+    message = "The local model is not reachable at http://127.0.0.1:11434. Start Ollama and try again."
+
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
+        sent.append(prompt)
+        return message, False
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    body = client.post("/gateway/chat", headers=headers, json={"prompt": "Email nimal@company.lk about the invoice"})
+
+    assert body.status_code == 200
+    body = body.json()
+    assert sent == ["Email [EMAIL_ADDRESS_1] about the invoice"]
+    assert body["modelStatus"] == "unavailable"
+    # Our own error text is shown as-is, not rewritten by the reply guard.
+    assert body["modelError"] == message
+    assert body["ollamaAvailable"] is False
+    events = client.get("/audit/events?actor=model.down@example.com", headers=headers).json()
+    assert events[0]["action"] == "Prompt sanitized; local model unavailable"
+    assert events[0]["status"] == "Sanitized"
+
+
+def test_blocked_prompt_never_reaches_the_model_and_explains_why(tmp_path, monkeypatch) -> None:
+    headers = register_admin(tmp_path, monkeypatch, "blocked.status@example.com")
+
+    async def fake_ollama(prompt: str, history=None) -> tuple[str, bool]:
+        raise AssertionError("a blocked prompt must not be sent to the model")
+
+    monkeypatch.setattr(gateway_app, "call_ollama", fake_ollama)
+    body = client.post(
+        "/gateway/chat", headers=headers, json={"prompt": "Fix login: AWS key AKIAZ7Q2WJ5K3LMNOPQR"},
+    ).json()
+
+    assert body["modelStatus"] == "blocked"
+    assert body["policyDecision"] == "BLOCK"
+    assert body["blockReason"]
+    assert body["modelError"] is None
+    assert "AKIAZ7Q2WJ5K3LMNOPQR" not in body["sanitizedPrompt"]
+
+
 def test_gateway_restore_mode_returns_the_requesters_own_values(tmp_path, monkeypatch) -> None:
     headers = register_admin(tmp_path, monkeypatch, "restore.mode@example.com")
     monkeypatch.setattr(gateway_app, "REPLY_PII_MODE", "restore")

@@ -193,6 +193,11 @@ class GatewayPromptOut(BaseModel):
     auditEvents: list[dict[str, object]]
     ollamaModel: str
     ollamaAvailable: bool
+    # "answered", "blocked", "not_forwarded" or "unavailable" (forwarded, but
+    # Ollama was down, the model is not pulled, or it timed out).
+    modelStatus: str
+    modelError: str | None = None
+    blockReason: str | None = None
     replyMaskedCount: int = 0
     replyFindingTypes: list[str] = []
     componentExtensionPoints: dict[str, str]
@@ -1119,56 +1124,63 @@ async def gateway_chat(
         [item.entity_type for item in verdict.sanitized.replacements],
     )
     should_forward = not verdict.blocked and verdict.policy.allowed_to_forward
-    if should_forward:
+    guarded = None
+    model_error: str | None = None
+    ollama_available = False
+    if verdict.blocked:
+        model_status = "blocked"
+        assistant_message = f"Blocked: {verdict.reason} {verdict.policy.recommendation}"
+    elif not should_forward:
+        model_status = "not_forwarded"
+        assistant_message = verdict.policy.recommendation
+    else:
+        # Only the placeholder text ever leaves the gateway.
         raw_reply, ollama_available = await call_ollama(sanitized.text, conversation.history())
         if ollama_available:
+            model_status = "answered"
             # The model only ever saw placeholders, so its raw reply is safe to
             # keep as context for the next turn.
             CONVERSATIONS.record_exchange(conversation, working_map, sanitized.text, raw_reply)
-        model_reply = raw_reply
-        keep: frozenset[str] = frozenset()
-        if REPLY_PII_MODE == "restore":
-            vault = {**working_map.values, **vault}
-            model_reply = PROMPT_SANITIZER.restore_all(model_reply, vault)
-            keep = frozenset(working_map.values.values()) | frozenset(
-                vault[item.placeholder] for item in sanitized.replacements if item.restorable
+            model_reply = raw_reply
+            keep: frozenset[str] = frozenset()
+            if REPLY_PII_MODE == "restore":
+                vault = {**working_map.values, **vault}
+                model_reply = PROMPT_SANITIZER.restore_all(model_reply, vault)
+                keep = frozenset(working_map.values.values()) | frozenset(
+                    vault[item.placeholder] for item in sanitized.replacements if item.restorable
+                )
+            guarded = RESPONSE_GUARD.guard(
+                model_reply, sanitized, keep_values=keep, known_placeholders=working_map.masked,
             )
-        guarded = RESPONSE_GUARD.guard(
-            model_reply, sanitized, keep_values=keep, known_placeholders=working_map.masked,
-        )
-        assistant_message = guarded.text
-        SANITIZER_METRICS.record_reply(guarded.placeholders_masked, guarded.findings_masked)
-    else:
-        guarded = None
-    if verdict.blocked:
-        assistant_message, ollama_available = f"Blocked: {verdict.reason} {verdict.policy.recommendation}", False
-    elif not should_forward:
-        assistant_message, ollama_available = verdict.policy.recommendation, False
+            assistant_message = guarded.text
+            SANITIZER_METRICS.record_reply(guarded.placeholders_masked, guarded.findings_masked)
+        else:
+            # call_ollama returned our own explanation (not running, model not
+            # pulled, timeout), not model output, so it skips the reply guard.
+            model_status = "unavailable"
+            model_error = raw_reply
+            assistant_message = raw_reply
 
-    if verdict.blocked:
+    found = "Detected sensitive data -> sanitized" if verdict.action == "SANITIZE" else "No sensitive data detected"
+    if model_status == "blocked":
         action = "Detected sensitive data -> blocked -> not forwarded."
         audit_action = "Prompt blocked"
-    elif verdict.action == "SANITIZE" and ollama_available:
-        action = "Detected sensitive data -> sanitized -> sent to local Ollama safely."
-        audit_action = "Sanitized prompt sent to local Ollama"
-    elif verdict.action == "SANITIZE":
-        action = "Detected sensitive data -> sanitized -> not forwarded."
-        audit_action = "Prompt sanitized; not forwarded"
-    elif ollama_available:
-        action = "No sensitive data detected -> sent to local Ollama."
-        audit_action = "Prompt allowed and sent to local Ollama"
+    elif model_status == "answered":
+        action = f"{found} -> sent to local Ollama safely."
+        audit_action = "Sanitized prompt sent to local Ollama" if verdict.action == "SANITIZE" else "Prompt allowed and sent to local Ollama"
+    elif model_status == "unavailable":
+        action = f"{found} -> local model unavailable, no reply."
+        audit_action = "Prompt sanitized; local model unavailable" if verdict.action == "SANITIZE" else "Prompt allowed; local model unavailable"
     else:
-        action = "No sensitive data detected -> forwarding disabled or provider unavailable."
-        audit_action = "Prompt allowed; not forwarded"
+        action = f"{found} -> not forwarded."
+        audit_action = "Prompt sanitized; not forwarded" if verdict.action == "SANITIZE" else "Prompt allowed; not forwarded"
 
     if guarded is not None and guarded.findings_masked:
         audit_action += f"; {guarded.findings_masked} sensitive value(s) masked in reply"
-    audit_event = write_local(
-        verdict_audit_event(
-            verdict, current_user["email"], payload.department, payload.service, payload.source, payload.prompt, audit_action,
-        ),
-        None,
+    audit_in = verdict_audit_event(
+        verdict, current_user["email"], payload.department, payload.service, payload.source, payload.prompt, audit_action,
     )
+    audit_event = write_local(audit_in, await write_remote(audit_in))
 
     return GatewayPromptOut(
         requestId=detection.request_id,
@@ -1199,6 +1211,9 @@ async def gateway_chat(
         auditEvents=[audit_event.model_dump(exclude={"originalPrompt"})],
         ollamaModel=OLLAMA_MODEL,
         ollamaAvailable=ollama_available,
+        modelStatus=model_status,
+        modelError=model_error,
+        blockReason=f"{verdict.reason} {verdict.policy.recommendation}".strip() if verdict.blocked else None,
         replyMaskedCount=guarded.total_masked if guarded else 0,
         replyFindingTypes=guarded.finding_types if guarded else [],
         componentExtensionPoints={
