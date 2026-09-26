@@ -1,0 +1,23 @@
+[project]
+name = "secure-ai-prompt-gateway-detection-engine"
+version = "1.0.0"
+requires-python = ">=3.12"
+description = "Local Sensitive Data Detection Engine for Secure AI Prompt Gateway"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S"]
+ignore = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+strict = false
+
+[tool.pytest.ini_options]
+testpaths = ["python_gateway/tests"]
+pythonpath = ["python_gateway"]

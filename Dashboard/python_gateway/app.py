@@ -1,0 +1,1492 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import os
+import sqlite3
+import threading
+import time
+from collections import deque
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Literal
+from uuid import uuid4
+
+import httpx
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+from detection_engine.api.dependencies import get_detection_engine
+from detection_engine.api.routes import router as detection_router
+from detection_engine.api.routes import root_metrics, root_ready
+from detection_engine.core.exceptions import DetectionError
+from detection_engine.core.logging import configure_logging
+from detection_engine.models.request import DetectRequest
+from detection_engine.models.response import DetectedEntity, DetectionResponse
+from detection_engine.services.health_service import health_payload
+from prompt_sanitizer import (
+    ConversationAccessError,
+    ConversationStore,
+    PromptSanitizer,
+    PseudonymMap,
+    RecommendedAction,
+    ResponseGuard,
+    RiskAssessment,
+    RiskAssessor,
+    SanitizedPrompt,
+    load_risk_policy,
+)
+from prompt_sanitizer.metrics import SanitizerMetrics
+from prompt_sanitizer.sanitizer import KEEP_WHEN_LOW_RISK
+from security_policy import PolicyAction, PolicyDecision, PolicyEngine, PolicyInput, UserContext
+
+
+LOGGER = logging.getLogger("secure_gateway")
+
+RiskLevel = Literal["Low", "Medium", "High", "Critical"]
+Role = Literal["admin", "auditor", "user"]
+
+BASE_DIR = Path(__file__).resolve().parent
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
+DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "audit_logs.sqlite3")))
+REMOTE_AUDIT_API_URL = os.getenv(
+    "REMOTE_AUDIT_API_URL",
+    "",
+)
+REMOTE_AUDIT_BEARER_TOKEN = os.getenv("REMOTE_AUDIT_BEARER_TOKEN", "")
+JWT_SECRET = os.getenv("JWT_SECRET", "local-dev-change-this-secret")
+TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", str(60 * 60 * 12)))
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+# Generation on a CPU can take minutes for long answers or long conversations.
+OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
+MAX_PROMPT_CHARS = int(os.getenv("MAX_PROMPT_CHARS", "50000"))
+PASSWORD_MIN_LENGTH = int(os.getenv("PASSWORD_MIN_LENGTH", "12"))
+PASSWORD_PBKDF2_ITERATIONS = int(os.getenv("PASSWORD_PBKDF2_ITERATIONS", "310000"))
+LOGIN_MAX_ATTEMPTS = int(os.getenv("LOGIN_MAX_ATTEMPTS", "5"))
+LOGIN_WINDOW_SECONDS = int(os.getenv("LOGIN_WINDOW_SECONDS", "900"))
+RISK_HISTORY_MINUTES = int(os.getenv("RISK_HISTORY_MINUTES", "60"))
+PROMPT_RATE_LIMIT_PER_MINUTE = int(os.getenv("PROMPT_RATE_LIMIT_PER_MINUTE", "60"))
+# "mask" (default): the reply shows masked previews (n***@company.lk) where the
+# model used placeholders. "restore": the requester sees their original values.
+# Sensitive data the model generates itself is masked in both modes.
+REPLY_PII_MODE = os.getenv("REPLY_PII_MODE", "mask").strip().lower()
+CONVERSATION_TTL_MINUTES = int(os.getenv("CONVERSATION_TTL_MINUTES", "30"))
+# Optional JSON file overriding risk weights/thresholds (see prompt_sanitizer/risk_policy.py).
+RISK_POLICY_FILE = os.getenv("RISK_POLICY_FILE", "").strip() or None
+CONVERSATION_MAX_MESSAGES = int(os.getenv("CONVERSATION_MAX_MESSAGES", "20"))
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if origin.strip()
+]
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    configure_logging()
+    validate_runtime_config()
+    init_db()
+    yield
+
+
+app = FastAPI(
+    title="Secure AI Prompt Gateway Python Service",
+    version="0.2.0",
+    description="Python gateway service that masks sensitive prompt data and writes real audit events.",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+app.include_router(detection_router)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("x-content-type-options", "nosniff")
+    response.headers.setdefault("x-frame-options", "DENY")
+    response.headers.setdefault("referrer-policy", "no-referrer")
+    response.headers.setdefault("permissions-policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith(("/auth", "/audit", "/reports", "/gateway")):
+        response.headers.setdefault("cache-control", "no-store")
+    return response
+
+
+class RegisterIn(BaseModel):
+    name: str = Field(..., examples=["Security Admin"])
+    email: str = Field(..., examples=["sec.admin@company.com"])
+    password: str = Field(..., min_length=8)
+
+
+class CreateUserIn(RegisterIn):
+    role: Role = "user"
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class AuthOut(BaseModel):
+    token: str
+    user: dict[str, str]
+
+
+class PromptInspectionIn(BaseModel):
+    department: str = "Unknown"
+    service: str = Field(..., examples=["ChatGPT Enterprise"])
+    prompt: str = Field(..., max_length=MAX_PROMPT_CHARS)
+    source: str = "python-gateway"
+
+
+class GatewayPromptIn(BaseModel):
+    prompt: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_PROMPT_CHARS,
+        examples=["Please fix this API issue. My API key is sk_live_ABC123456789"],
+    )
+    service: str = "Ollama Qwen2.5"
+    department: str = "Engineering"
+    source: str = "secure-chat-gateway"
+    forward_to_ollama: bool = True
+    # Continue an earlier chat; omit to start a new conversation.
+    conversation_id: str | None = Field(default=None, max_length=64)
+
+
+class GatewayEntityOut(BaseModel):
+    entityType: str
+    category: str
+    maskedValue: str
+    riskLevel: str
+    confidence: float
+    start: int
+    end: int
+
+
+class GatewayPromptOut(BaseModel):
+    requestId: str
+    conversationId: str
+    userPrompt: str
+    sanitizedPrompt: str
+    assistantMessage: str
+    policyDecision: str
+    actionTaken: str
+    riskLevel: str
+    riskScore: float
+    riskAssessment: dict[str, object]
+    replacements: list[dict[str, object]]
+    policyResult: dict[str, object]
+    containsSensitiveData: bool
+    detectedEntities: list[GatewayEntityOut]
+    auditEvents: list[dict[str, object]]
+    ollamaModel: str
+    ollamaAvailable: bool
+    # "answered", "blocked", "not_forwarded" or "unavailable" (forwarded, but
+    # Ollama was down, the model is not pulled, or it timed out).
+    modelStatus: str
+    modelError: str | None = None
+    blockReason: str | None = None
+    replyMaskedCount: int = 0
+    replyFindingTypes: list[str] = []
+    componentExtensionPoints: dict[str, str]
+    componentPlaceholders: dict[str, str]
+
+
+class SanitizeIn(BaseModel):
+    prompt: str = Field(..., min_length=1, max_length=MAX_PROMPT_CHARS)
+    service: str = Field(default="Browser AI assistant", max_length=120)
+    department: str = Field(default="Unknown", max_length=120)
+    source: str = Field(default="browser-extension", max_length=60)
+
+
+class SanitizeOut(BaseModel):
+    requestId: str
+    decision: str
+    reason: str
+    sanitizedPrompt: str
+    containsSensitiveData: bool
+    riskLevel: str
+    riskScore: int
+    riskAssessment: dict[str, object]
+    replacements: list[dict[str, object]]
+    policyResult: dict[str, object]
+    auditId: str
+
+
+class AuditEventIn(BaseModel):
+    actor: str
+    department: str = "Unknown"
+    service: str
+    action: str
+    status: str
+    risk: RiskLevel
+    riskScore: int
+    finding: str
+    category: str
+    policyRule: str
+    maskedOutput: str
+    originalPrompt: str | None = None
+    promptHash: str | None = None
+    source: str = "python-gateway"
+
+
+class AuditEvent(AuditEventIn):
+    id: str
+    timestamp: str
+    remoteId: str | None = None
+
+
+def b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+
+def sign_token(payload: dict[str, str | int]) -> str:
+    encoded = b64url(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signature = hmac.new(JWT_SECRET.encode("utf-8"), encoded.encode("utf-8"), hashlib.sha256).digest()
+    return f"{encoded}.{b64url(signature)}"
+
+
+def verify_token(token: str) -> dict[str, str | int] | None:
+    try:
+        encoded, signature = token.split(".", 1)
+        expected = b64url(hmac.new(JWT_SECRET.encode("utf-8"), encoded.encode("utf-8"), hashlib.sha256).digest())
+        if not hmac.compare_digest(signature, expected):
+            return None
+        padded = encoded + "=" * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("utf-8")))
+        if int(payload.get("exp", 0)) < int(time.time()):
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def password_hash(password: str, salt: str | None = None) -> str:
+    salt = salt or uuid4().hex
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_PBKDF2_ITERATIONS,
+    ).hex()
+    return f"pbkdf2_sha256${PASSWORD_PBKDF2_ITERATIONS}${salt}${digest}"
+
+
+def check_password(password: str, stored: str) -> bool:
+    parts = stored.split("$")
+    if len(parts) == 4 and parts[0] == "pbkdf2_sha256":
+        _, iterations, salt, digest = parts
+        candidate = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt.encode("utf-8"),
+            int(iterations),
+        ).hex()
+        return hmac.compare_digest(candidate, digest)
+    if len(parts) == 2:
+        salt, digest = parts
+        legacy_digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000).hex()
+        current_digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt.encode("utf-8"),
+            PASSWORD_PBKDF2_ITERATIONS,
+        ).hex()
+        return hmac.compare_digest(legacy_digest, digest) or hmac.compare_digest(current_digest, digest)
+    return False
+
+
+def get_auth_user(authorization: str | None) -> dict[str, str]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Login required")
+    payload = verify_token(authorization.split(" ", 1)[1])
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired login")
+    return {"email": str(payload["email"]), "name": str(payload["name"]), "role": normalize_role(str(payload["role"]))}
+
+
+def normalize_role(role: str) -> Role:
+    normalized = role.strip().lower().replace("security admin", "admin")
+    if normalized in ("admin", "auditor", "user"):
+        return normalized  # type: ignore[return-value]
+    return "user"
+
+
+def require_role(current_user: dict[str, str], allowed: set[Role]) -> None:
+    if normalize_role(current_user["role"]) not in allowed:
+        raise HTTPException(status_code=403, detail="You do not have permission for this action")
+
+
+def validate_runtime_config() -> None:
+    if ENVIRONMENT in {"production", "prod"} and JWT_SECRET == "local-dev-change-this-secret":
+        raise RuntimeError("JWT_SECRET must be changed before running in production")
+    if ENVIRONMENT in {"production", "prod"} and len(JWT_SECRET) < 32:
+        raise RuntimeError("JWT_SECRET must be at least 32 characters in production")
+    if not CORS_ALLOWED_ORIGINS:
+        raise RuntimeError("CORS_ALLOWED_ORIGINS must contain at least one allowed origin")
+
+
+def validate_password_strength(password: str) -> None:
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise HTTPException(status_code=400, detail=f"password must be at least {PASSWORD_MIN_LENGTH} characters")
+    checks = [
+        any(character.islower() for character in password),
+        any(character.isupper() for character in password),
+        any(character.isdigit() for character in password),
+        any(not character.isalnum() for character in password),
+    ]
+    if sum(checks) < 3:
+        raise HTTPException(status_code=400, detail="password must include at least three character types")
+
+
+login_failures: dict[str, list[float]] = {}
+
+
+def login_throttle_key(email: str, request: Request) -> str:
+    host = request.client.host if request.client else "unknown"
+    return f"{host}:{email.strip().lower()}"
+
+
+def prune_login_failures(key: str) -> list[float]:
+    cutoff = time.time() - LOGIN_WINDOW_SECONDS
+    attempts = [attempt for attempt in login_failures.get(key, []) if attempt >= cutoff]
+    if attempts:
+        login_failures[key] = attempts
+    else:
+        login_failures.pop(key, None)
+    return attempts
+
+
+def enforce_login_throttle(email: str, request: Request) -> str:
+    key = login_throttle_key(email, request)
+    attempts = prune_login_failures(key)
+    if len(attempts) >= LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail="Too many failed login attempts. Try again later.")
+    return key
+
+
+def record_failed_login(key: str) -> None:
+    attempts = prune_login_failures(key)
+    attempts.append(time.time())
+    login_failures[key] = attempts
+
+
+def clear_failed_logins(key: str) -> None:
+    login_failures.pop(key, None)
+
+
+def connect() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(DB_PATH, timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA busy_timeout = 10000")
+    return connection
+
+
+def init_db() -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              email TEXT NOT NULL UNIQUE,
+              password_hash TEXT NOT NULL,
+              role TEXT NOT NULL DEFAULT 'Security Admin',
+              created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute("UPDATE users SET role = 'admin' WHERE lower(role) IN ('security admin', 'administrator')")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_events (
+              id TEXT PRIMARY KEY,
+              timestamp TEXT NOT NULL,
+              actor TEXT NOT NULL,
+              department TEXT NOT NULL,
+              service TEXT NOT NULL,
+              action TEXT NOT NULL,
+              status TEXT NOT NULL,
+              risk TEXT NOT NULL,
+              risk_score INTEGER NOT NULL,
+              finding TEXT NOT NULL,
+              category TEXT NOT NULL,
+              policy_rule TEXT NOT NULL,
+              masked_output TEXT NOT NULL,
+              prompt_hash TEXT NOT NULL,
+              source TEXT NOT NULL,
+              remote_id TEXT
+            )
+            """
+        )
+        # Supports the per-user recent-blocked lookup done on every prompt.
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_actor_status_time ON audit_events (actor, status, timestamp)"
+        )
+
+
+def auth_response(row: sqlite3.Row) -> AuthOut:
+    role = normalize_role(row["role"])
+    user = {"name": row["name"], "email": row["email"], "role": role}
+    token = sign_token({
+        "name": row["name"],
+        "email": row["email"],
+        "role": role,
+        "exp": int(time.time()) + TOKEN_TTL_SECONDS,
+    })
+    return AuthOut(token=token, user=user)
+
+
+POLICY_BY_CATEGORY = {
+    "CREDENTIAL": "Block credentials and tokens",
+    "FINANCIAL": "Mask PCI data before AI submission",
+    "PII": "Mask PII before AI submission",
+    "SOURCE_CODE": "Warn on source code or internal URLs",
+}
+RISK_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+
+
+def primary_entity(detection: DetectionResponse) -> DetectedEntity:
+    """The finding that drives the audit record: highest risk, then confidence."""
+    return max(
+        detection.detected_entities,
+        key=lambda entity: (RISK_RANK[entity.risk_level.value], entity.confidence),
+    )
+
+
+def entity_label(entity_type: str) -> str:
+    return entity_type.replace("_", " ").title()
+
+
+def inspect_prompt(payload: PromptInspectionIn, user: dict[str, str]) -> AuditEventIn:
+    verdict, _ = evaluate_prompt(payload.prompt, user, payload.service, payload.department, forward_requested=False)
+    SANITIZER_METRICS.record_prompt(
+        verdict.action, payload.source, verdict.assessment.score,
+        [item.entity_type for item in verdict.sanitized.replacements],
+    )
+    action = {"BLOCK": "Prompt blocked", "SANITIZE": "Prompt sanitized"}.get(verdict.action, "Prompt allowed")
+    return verdict_audit_event(
+        verdict, user["email"], payload.department, payload.service, payload.source, payload.prompt, action,
+    )
+
+
+def get_policy_engine() -> PolicyEngine:
+    return PolicyEngine()
+
+
+PROMPT_SANITIZER = PromptSanitizer()
+RISK_ASSESSOR = RiskAssessor(load_risk_policy(RISK_POLICY_FILE))
+CONVERSATIONS = ConversationStore(ttl_seconds=CONVERSATION_TTL_MINUTES * 60, max_messages=CONVERSATION_MAX_MESSAGES)
+SANITIZER_METRICS = SanitizerMetrics(active_conversations=lambda: CONVERSATIONS.active_count())
+RESPONSE_GUARD = ResponseGuard(lambda text: get_detection_engine().detect(DetectRequest(prompt=text)))
+ACTION_STRICTNESS = {"ALLOW": 0, "SANITIZE": 1, "BLOCK": 2}
+
+
+class PromptVerdict(BaseModel):
+    """Combined outcome of Components 01-03 for one prompt."""
+
+    detection: DetectionResponse
+    sanitized: SanitizedPrompt
+    assessment: RiskAssessment
+    policy: PolicyDecision
+    action: str
+    reason: str
+
+    @property
+    def blocked(self) -> bool:
+        return self.action == "BLOCK"
+
+    @property
+    def audit_status(self) -> str:
+        if self.blocked:
+            return "Blocked"
+        return "Sanitized" if self.action == "SANITIZE" else "Allowed"
+
+    @property
+    def policy_rule(self) -> str:
+        if self.blocked and self.policy.action != PolicyAction.BLOCK:
+            return f"RISK-{self.assessment.level.value}: Component 02 risk score {self.assessment.score}/100"
+        return f"{self.policy.rule_id}: {self.policy.rule_name}"
+
+
+class SlidingWindowLimiter:
+    """Per-key request limit over a sliding time window (thread-safe).
+
+    Prompt endpoints run detection and NER on every call; without a limit one
+    client can tie up the workers or script thousands of variations to map
+    out what the detector misses.
+    """
+
+    def __init__(self, limit: int, window_seconds: float) -> None:
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self._hits: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def check(self, key: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            hits = self._hits.setdefault(key, deque())
+            while hits and hits[0] <= now - self.window_seconds:
+                hits.popleft()
+            if len(hits) >= self.limit:
+                retry_after = max(1, int(hits[0] + self.window_seconds - now) + 1)
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many prompts in a short time. Wait a moment and try again.",
+                    headers={"retry-after": str(retry_after)},
+                )
+            hits.append(now)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._hits.clear()
+
+
+prompt_rate_limiter = SlidingWindowLimiter(PROMPT_RATE_LIMIT_PER_MINUTE, 60)
+
+
+def recent_blocked_count(actor: str) -> int:
+    """Blocked prompts by this user within RISK_HISTORY_MINUTES (from the audit log)."""
+    cutoff = datetime.fromtimestamp(time.time() - RISK_HISTORY_MINUTES * 60, timezone.utc).isoformat()
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS count FROM audit_events WHERE actor = ? AND status = 'Blocked' AND timestamp >= ?",
+            (actor, cutoff),
+        ).fetchone()
+    return int(row["count"])
+
+
+def evaluate_prompt(
+    prompt: str,
+    user: dict[str, str],
+    service: str,
+    department: str,
+    forward_requested: bool,
+    mapping: PseudonymMap | None = None,
+) -> tuple[PromptVerdict, dict[str, str]]:
+    """Run detection -> sanitization -> risk assessment -> policy.
+
+    The stricter of the risk recommendation (Component 02) and the policy
+    decision (Component 03) wins, so a prompt that is only "sanitize" under
+    every individual rule is still blocked when the combined risk is critical.
+    Returns the verdict and the in-memory placeholder vault.
+    """
+    detection = get_detection_engine().detect(DetectRequest(prompt=prompt))
+    sanitized, vault = PROMPT_SANITIZER.sanitize(prompt, detection, mapping)
+    assessment = RISK_ASSESSOR.assess(detection, recent_blocked=recent_blocked_count(user["email"]))
+    policy = get_policy_engine().evaluate(
+        PolicyInput(
+            user=UserContext(**user),
+            detection=detection,
+            service=service,
+            department=department,
+            forward_requested=forward_requested,
+        )
+    )
+    risk_action = assessment.recommended_action.value
+    if ACTION_STRICTNESS[risk_action] > ACTION_STRICTNESS[policy.action.value]:
+        action = risk_action
+        reason = assessment.summary
+    else:
+        action = policy.action.value
+        reason = policy.reason
+    if action == RecommendedAction.SANITIZE.value and not sanitized.changed and assessment.level.value == "LOW":
+        # Nothing left to replace and nothing risky found: sanitizing would be a no-op.
+        action = RecommendedAction.ALLOW.value
+        reason = "No sensitive values needed to be removed."
+    verdict = PromptVerdict(
+        detection=detection,
+        sanitized=sanitized,
+        assessment=assessment,
+        policy=policy,
+        action=action,
+        reason=reason,
+    )
+    return verdict, vault
+
+
+def verdict_audit_event(
+    verdict: PromptVerdict,
+    actor: str,
+    department: str,
+    service: str,
+    source: str,
+    prompt: str,
+    action: str,
+) -> AuditEventIn:
+    finding, category = "No sensitive data detected", "Clean"
+    if verdict.detection.detected_entities:
+        primary = primary_entity(verdict.detection)
+        finding, category = entity_label(primary.entity_type), primary.category.value
+    return AuditEventIn(
+        actor=actor,
+        department=department,
+        service=service,
+        action=action,
+        status=verdict.audit_status,
+        risk=title_case_risk(verdict.assessment.level.value),
+        riskScore=verdict.assessment.score,
+        finding=finding,
+        category=category,
+        policyRule=verdict.policy_rule,
+        maskedOutput=verdict.sanitized.text,
+        promptHash=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        source=source,
+    )
+
+
+def redact_from_detection(prompt: str, entities: list[DetectedEntity]) -> str:
+    sanitized = prompt
+    for entity in sorted(entities, key=lambda item: item.start, reverse=True):
+        replacement = "****"
+        sanitized = sanitized[: entity.start] + replacement + sanitized[entity.end :]
+    return sanitized
+
+
+def audit_sensitive_entities(detection: DetectionResponse) -> list[DetectedEntity]:
+    """Findings the audit boundary must redact.
+
+    A low-risk place or company name is left in the prompt on purpose by the
+    sanitizer, so it must not relabel a clean prompt as sanitized here either.
+    """
+    return [
+        entity
+        for entity in detection.detected_entities
+        if not (entity.entity_type in KEEP_WHEN_LOW_RISK and entity.risk_level.value == "LOW")
+    ]
+
+
+def sanitize_audit_output(value: str) -> tuple[str, DetectionResponse | None, list[DetectedEntity]]:
+    if not value.strip():
+        return value, None, []
+    try:
+        detection = get_detection_engine().detect(DetectRequest(prompt=value))
+    except DetectionError:
+        return value, None, []
+    entities = audit_sensitive_entities(detection)
+    if not entities:
+        return value, detection, []
+    return redact_from_detection(value, entities), detection, entities
+
+
+def harden_audit_event(event: AuditEventIn) -> AuditEventIn:
+    sanitized_output, detection, entities = sanitize_audit_output(event.maskedOutput)
+    if not detection or not entities:
+        return event
+
+    updates: dict[str, object] = {"maskedOutput": sanitized_output}
+    if sanitized_output != event.maskedOutput:
+        primary = max(entities, key=lambda entity: (RISK_RANK[entity.risk_level.value], entity.confidence))
+        updates.update(
+            {
+                "risk": title_case_risk(detection.overall_risk.value),
+                "riskScore": int(round(detection.risk_score * 100)),
+                "finding": entity_label(primary.entity_type),
+                "category": primary.category.value,
+                "policyRule": "Audit write boundary sanitization enforced",
+            }
+        )
+        if event.status.lower() == "allowed":
+            updates["status"] = "Sanitized"
+            updates["action"] = "Sensitive audit output sanitized"
+    return event.model_copy(update=updates)
+
+
+def audit_event_from_row(row: sqlite3.Row) -> AuditEvent:
+    return AuditEvent(
+        id=row["id"],
+        timestamp=row["timestamp"],
+        actor=row["actor"],
+        department=row["department"],
+        service=row["service"],
+        action=row["action"],
+        status=row["status"],
+        risk=row["risk"],
+        riskScore=row["risk_score"],
+        finding=row["finding"],
+        category=row["category"],
+        policyRule=row["policy_rule"],
+        maskedOutput=row["masked_output"],
+        promptHash=row["prompt_hash"],
+        source=row["source"],
+        remoteId=row["remote_id"],
+    )
+
+
+def audit_filters(
+    risk: str | None,
+    status: str | None,
+    service: str | None,
+    actor: str | None,
+) -> tuple[str, list[object]]:
+    clauses: list[str] = []
+    params: list[object] = []
+    risk = risk.strip() if risk else None
+    status = status.strip() if status else None
+    service = service.strip() if service else None
+    actor = actor.strip() if actor else None
+    if risk:
+        clauses.append("lower(risk) = lower(?)")
+        params.append(risk)
+    if status:
+        clauses.append("lower(status) = lower(?)")
+        params.append(status)
+    if service:
+        clauses.append("lower(service) LIKE lower(?)")
+        params.append(f"%{service}%")
+    if actor:
+        clauses.append("lower(actor) LIKE lower(?)")
+        params.append(f"%{actor}%")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where, params
+
+
+def csv_cell(value: object) -> str:
+    text = str(value or "")
+    if text.startswith(("=", "+", "-", "@", "\t", "\r")):
+        text = f"'{text}"
+    escaped = text.replace('"', '""')
+    return f'"{escaped}"'
+
+
+def title_case_risk(risk: str) -> RiskLevel:
+    normalized = risk.strip().lower()
+    if normalized == "critical":
+        return "Critical"
+    if normalized == "high":
+        return "High"
+    if normalized == "medium":
+        return "Medium"
+    return "Low"
+
+
+async def call_ollama(sanitized_prompt: str, history: list[dict[str, str]] | None = None) -> tuple[str, bool]:
+    """Send the sanitized prompt, with the conversation's sanitized history, to Ollama."""
+    system = (
+        "You are the local Secure AI Prompt Gateway assistant. "
+        "Answer only using the sanitized prompt. Never ask for or reconstruct redacted secrets. "
+        "Values shown as [TYPE_N] placeholders were removed for privacy; refer to them by the same "
+        "placeholder, and the same placeholder means the same value throughout the conversation."
+    )
+    messages = [{"role": "system", "content": system}, *(history or []), {"role": "user", "content": sanitized_prompt}]
+    # Connecting should be quick; generating a long answer on a CPU can take
+    # minutes, so only the read timeout is long.
+    timeout = httpx.Timeout(OLLAMA_TIMEOUT_SECONDS, connect=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
+                json={
+                    "model": OLLAMA_MODEL,
+                    "messages": messages,
+                    "stream": False,
+                    "options": {"temperature": 0.2},
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+    except httpx.TimeoutException:
+        LOGGER.warning("ollama request timed out after %ss", OLLAMA_TIMEOUT_SECONDS)
+        return (
+            f"The local model did not answer within {OLLAMA_TIMEOUT_SECONDS} seconds. "
+            "Try a shorter request, or raise OLLAMA_TIMEOUT_SECONDS.",
+            False,
+        )
+    except httpx.ConnectError:
+        return f"The local model is not reachable at {OLLAMA_BASE_URL}. Start Ollama and try again.", False
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return f"The model '{OLLAMA_MODEL}' is not installed. Run: ollama pull {OLLAMA_MODEL}", False
+        LOGGER.warning("ollama returned HTTP %s", exc.response.status_code)
+        return f"The local model returned an error (HTTP {exc.response.status_code}).", False
+    except (httpx.HTTPError, ValueError) as exc:
+        LOGGER.warning("ollama request failed: %s", type(exc).__name__)
+        return "The local model request failed. Please try again.", False
+    text = str((body.get("message") or {}).get("content") or "").strip()
+    return text or "The model returned an empty answer.", True
+
+
+async def write_remote(event: AuditEventIn) -> str | None:
+    if not REMOTE_AUDIT_API_URL:
+        return None
+    headers = {}
+    if REMOTE_AUDIT_BEARER_TOKEN:
+        headers["authorization"] = f"Bearer {REMOTE_AUDIT_BEARER_TOKEN}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                REMOTE_AUDIT_API_URL,
+                json=event.model_dump(exclude={"originalPrompt"}),
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json().get("id")
+    except (httpx.HTTPError, ValueError) as exc:
+        # The local SQLite record is authoritative; a SIEM outage must not
+        # turn into a failed prompt or a lost audit event.
+        LOGGER.warning("remote audit forwarding failed: %s", type(exc).__name__)
+        return None
+
+
+def write_local(event: AuditEventIn, remote_id: str | None) -> AuditEvent:
+    event = harden_audit_event(event)
+    audit = AuditEvent(
+        id=f"AUD-{uuid4().hex[:10].upper()}",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        remoteId=remote_id,
+        **event.model_dump(),
+    )
+    with connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO audit_events
+            (id, timestamp, actor, department, service, action, status, risk, risk_score,
+             finding, category, policy_rule, masked_output, prompt_hash, source, remote_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                audit.id,
+                audit.timestamp,
+                audit.actor,
+                audit.department,
+                audit.service,
+                audit.action,
+                audit.status,
+                audit.risk,
+                audit.riskScore,
+                audit.finding,
+                audit.category,
+                audit.policyRule,
+                audit.maskedOutput,
+                audit.promptHash or "",
+                audit.source,
+                remote_id,
+            ),
+        )
+    return audit
+
+
+@app.get("/health")
+def health() -> dict[str, object]:
+    engine = get_detection_engine()
+    detection = health_payload(engine)
+    return {
+        "status": "healthy",
+        "service": "python-prompt-gateway",
+        "detectionEngine": detection,
+        "remoteAuditApiUrl": REMOTE_AUDIT_API_URL,
+        "remoteAuthConfigured": bool(REMOTE_AUDIT_BEARER_TOKEN),
+        "database": DB_PATH.name,
+        "time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/ready")
+def ready() -> dict[str, object]:
+    return root_ready(get_detection_engine())
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    detection = root_metrics()
+    body = detection.body.decode("utf-8") + SANITIZER_METRICS.render()
+    return Response(body, media_type=detection.media_type)
+
+
+@app.get("/policies")
+def policies(authorization: str | None = Header(default=None)) -> dict[str, object]:
+    get_auth_user(authorization)
+    return {
+        "policies": [
+            {
+                "id": rule.rule_id,
+                "name": rule.name,
+                "mode": "Enforce" if rule.action in {PolicyAction.BLOCK, PolicyAction.SANITIZE} else "Monitor",
+                "owner": "Security",
+                "enabled": rule.enabled,
+                "action": rule.action.value,
+                "description": rule.description,
+                "standards": ", ".join(rule.standards),
+            }
+            for rule in get_policy_engine().active_rules()
+        ]
+    }
+
+
+@app.get("/integrations")
+async def integrations(authorization: str | None = Header(default=None)) -> dict[str, object]:
+    get_auth_user(authorization)
+    ollama_status = await ollama_model_status()
+    engine = get_detection_engine()
+    return {
+        "integrations": [
+            {"name": f"Ollama ({OLLAMA_MODEL})", "status": ollama_status, "mode": f"Local model at {OLLAMA_BASE_URL}"},
+            {
+                "name": "Detection Engine NER",
+                "status": "Loaded" if engine.ner_available else "Regex only",
+                "mode": "spaCy named-entity recognition",
+            },
+            {
+                "name": "Remote Audit / SIEM",
+                "status": "Configured" if REMOTE_AUDIT_API_URL else "Not configured",
+                "mode": "Forwards masked audit events",
+            },
+            {"name": "SQLite Audit Store", "status": "Active", "mode": DB_PATH.name},
+        ]
+    }
+
+
+async def ollama_model_status() -> str:
+    try:
+        async with httpx.AsyncClient(timeout=2) as client:
+            response = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags")
+            response.raise_for_status()
+            models = {str(model.get("name", "")) for model in response.json().get("models", [])}
+    except (httpx.HTTPError, ValueError):
+        return "Offline"
+    return "Online" if OLLAMA_MODEL in models else "Model not pulled"
+
+
+@app.post("/auth/register", response_model=AuthOut, status_code=201)
+def register(payload: RegisterIn) -> AuthOut:
+    init_db()
+    email = payload.email.strip().lower()
+    name = payload.name.strip()
+    if not email or not name:
+        raise HTTPException(status_code=400, detail="name and email are required")
+    validate_password_strength(payload.password)
+
+    with connect() as connection:
+        count = connection.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
+        role: Role = "admin" if count == 0 else "user"
+        try:
+            connection.execute(
+                """
+                INSERT INTO users (id, name, email, password_hash, role, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"USR-{uuid4().hex[:10].upper()}",
+                    name,
+                    email,
+                    password_hash(payload.password),
+                    role,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="email is already registered") from exc
+        row = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    return auth_response(row)
+
+
+@app.post("/admin/users", response_model=AuthOut, status_code=201)
+def create_user(payload: CreateUserIn, authorization: str | None = Header(default=None)) -> AuthOut:
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
+    init_db()
+    email = payload.email.strip().lower()
+    name = payload.name.strip()
+    if not email or not name:
+        raise HTTPException(status_code=400, detail="name and email are required")
+    validate_password_strength(payload.password)
+
+    with connect() as connection:
+        try:
+            connection.execute(
+                """
+                INSERT INTO users (id, name, email, password_hash, role, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"USR-{uuid4().hex[:10].upper()}",
+                    name,
+                    email,
+                    password_hash(payload.password),
+                    payload.role,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="email is already registered") from exc
+        row = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    return auth_response(row)
+
+
+@app.delete("/admin/users/{user_id}")
+def delete_user(user_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
+    init_db()
+
+    with connect() as connection:
+        row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="user not found")
+        if row["email"] == current_user["email"]:
+            raise HTTPException(status_code=400, detail="you cannot delete your own account")
+        connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    return {"status": "deleted", "id": user_id}
+
+
+@app.post("/auth/login", response_model=AuthOut)
+def login(payload: LoginIn, request: Request) -> AuthOut:
+    init_db()
+    email = payload.email.strip().lower()
+    throttle_key = enforce_login_throttle(email, request)
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT * FROM users WHERE email = ?",
+            (email,),
+        ).fetchone()
+    if not row or not check_password(payload.password, row["password_hash"]):
+        record_failed_login(throttle_key)
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    clear_failed_logins(throttle_key)
+    return auth_response(row)
+
+
+@app.get("/auth/me")
+def me(authorization: str | None = Header(default=None)) -> dict[str, str]:
+    return get_auth_user(authorization)
+
+
+@app.get("/users")
+def users(authorization: str | None = Header(default=None)) -> dict[str, object]:
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
+    init_db()
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT u.id, u.name, u.email, u.role, u.created_at AS createdAt,
+                   COUNT(a.id) AS promptCount,
+                   SUM(CASE WHEN a.status = 'Blocked' THEN 1 ELSE 0 END) AS blockedCount
+            FROM users u
+            LEFT JOIN audit_events a ON a.actor = u.email
+            GROUP BY u.id, u.name, u.email, u.role, u.created_at
+            ORDER BY u.created_at DESC
+            """
+        ).fetchall()
+    return {"users": [dict(row) for row in rows]}
+
+
+@app.post("/inspect", response_model=AuditEvent)
+async def inspect_and_log(
+    payload: PromptInspectionIn,
+    authorization: str | None = Header(default=None),
+) -> AuditEvent:
+    init_db()
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
+    prompt_rate_limiter.check(current_user["email"])
+    try:
+        event = inspect_prompt(payload, current_user)
+    except DetectionError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+    remote_id = await write_remote(event)
+    return write_local(event, remote_id)
+
+
+@app.post("/gateway/chat", response_model=GatewayPromptOut)
+async def gateway_chat(
+    payload: GatewayPromptIn,
+    authorization: str | None = Header(default=None),
+) -> GatewayPromptOut:
+    init_db()
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin", "user"})
+    prompt_rate_limiter.check(current_user["email"])
+
+    try:
+        conversation = CONVERSATIONS.open(
+            payload.conversation_id, current_user["email"], keep_values=REPLY_PII_MODE == "restore",
+        )
+    except ConversationAccessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Work on a copy: values from a blocked prompt must not stay in the map.
+    working_map = conversation.mapping.copy()
+    try:
+        verdict, vault = evaluate_prompt(
+            payload.prompt, current_user, payload.service, payload.department, payload.forward_to_ollama,
+            mapping=working_map,
+        )
+    except DetectionError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+
+    detection, sanitized, assessment = verdict.detection, verdict.sanitized, verdict.assessment
+    SANITIZER_METRICS.record_prompt(
+        verdict.action, payload.source, verdict.assessment.score,
+        [item.entity_type for item in verdict.sanitized.replacements],
+    )
+    should_forward = not verdict.blocked and verdict.policy.allowed_to_forward
+    guarded = None
+    model_error: str | None = None
+    ollama_available = False
+    if verdict.blocked:
+        model_status = "blocked"
+        assistant_message = f"Blocked: {verdict.reason} {verdict.policy.recommendation}"
+    elif not should_forward:
+        model_status = "not_forwarded"
+        assistant_message = verdict.policy.recommendation
+    else:
+        # Only the placeholder text ever leaves the gateway.
+        raw_reply, ollama_available = await call_ollama(sanitized.text, conversation.history())
+        if ollama_available:
+            model_status = "answered"
+            # The model only ever saw placeholders, so its raw reply is safe to
+            # keep as context for the next turn.
+            CONVERSATIONS.record_exchange(conversation, working_map, sanitized.text, raw_reply)
+            model_reply = raw_reply
+            keep: frozenset[str] = frozenset()
+            if REPLY_PII_MODE == "restore":
+                vault = {**working_map.values, **vault}
+                model_reply = PROMPT_SANITIZER.restore_all(model_reply, vault)
+                keep = frozenset(working_map.values.values()) | frozenset(
+                    vault[item.placeholder] for item in sanitized.replacements if item.restorable
+                )
+            guarded = RESPONSE_GUARD.guard(
+                model_reply, sanitized, keep_values=keep, known_placeholders=working_map.masked,
+            )
+            assistant_message = guarded.text
+            SANITIZER_METRICS.record_reply(guarded.placeholders_masked, guarded.findings_masked)
+        else:
+            # call_ollama returned our own explanation (not running, model not
+            # pulled, timeout), not model output, so it skips the reply guard.
+            model_status = "unavailable"
+            model_error = raw_reply
+            assistant_message = raw_reply
+
+    found = "Detected sensitive data -> sanitized" if verdict.action == "SANITIZE" else "No sensitive data detected"
+    if model_status == "blocked":
+        action = "Detected sensitive data -> blocked -> not forwarded."
+        audit_action = "Prompt blocked"
+    elif model_status == "answered":
+        action = f"{found} -> sent to local Ollama safely."
+        audit_action = "Sanitized prompt sent to local Ollama" if verdict.action == "SANITIZE" else "Prompt allowed and sent to local Ollama"
+    elif model_status == "unavailable":
+        action = f"{found} -> local model unavailable, no reply."
+        audit_action = "Prompt sanitized; local model unavailable" if verdict.action == "SANITIZE" else "Prompt allowed; local model unavailable"
+    else:
+        action = f"{found} -> not forwarded."
+        audit_action = "Prompt sanitized; not forwarded" if verdict.action == "SANITIZE" else "Prompt allowed; not forwarded"
+
+    if guarded is not None and guarded.findings_masked:
+        audit_action += f"; {guarded.findings_masked} sensitive value(s) masked in reply"
+    audit_in = verdict_audit_event(
+        verdict, current_user["email"], payload.department, payload.service, payload.source, payload.prompt, audit_action,
+    )
+    audit_event = write_local(audit_in, await write_remote(audit_in))
+
+    return GatewayPromptOut(
+        requestId=detection.request_id,
+        conversationId=conversation.id,
+        userPrompt=payload.prompt,
+        sanitizedPrompt=sanitized.text,
+        assistantMessage=assistant_message,
+        policyDecision=verdict.action,
+        actionTaken=action,
+        riskLevel=assessment.level.value,
+        riskScore=assessment.score / 100,
+        riskAssessment=assessment.model_dump(mode="json"),
+        replacements=[item.model_dump(mode="json") for item in sanitized.replacements],
+        policyResult=verdict.policy.model_dump(mode="json"),
+        containsSensitiveData=detection.contains_sensitive_data,
+        detectedEntities=[
+            GatewayEntityOut(
+                entityType=entity.entity_type,
+                category=entity.category.value,
+                maskedValue=entity.masked_value,
+                riskLevel=entity.risk_level.value,
+                confidence=entity.confidence,
+                start=entity.start,
+                end=entity.end,
+            )
+            for entity in detection.detected_entities
+        ],
+        auditEvents=[audit_event.model_dump(exclude={"originalPrompt"})],
+        ollamaModel=OLLAMA_MODEL,
+        ollamaAvailable=ollama_available,
+        modelStatus=model_status,
+        modelError=model_error,
+        blockReason=f"{verdict.reason} {verdict.policy.recommendation}".strip() if verdict.blocked else None,
+        replyMaskedCount=guarded.total_masked if guarded else 0,
+        replyFindingTypes=guarded.finding_types if guarded else [],
+        componentExtensionPoints={
+            "component_02": "Prompt Sanitization & Risk Assessment is active: typed placeholders and weighted risk scoring.",
+            "component_03": "Security Policy & Access Control Engine is active for RBAC and ALLOW/SANITIZE/BLOCK decisions.",
+        },
+        componentPlaceholders={
+            "component_02": "Implemented by Component 02 prompt sanitizer and risk assessor.",
+            "component_03": "Implemented by Component 03 policy engine.",
+        },
+    )
+
+
+@app.delete("/gateway/conversations/{conversation_id}")
+def end_conversation(conversation_id: str, authorization: str | None = Header(default=None)) -> dict[str, str]:
+    """Forget a conversation's history and placeholder map ("New chat")."""
+    current_user = get_auth_user(authorization)
+    if not CONVERSATIONS.discard(conversation_id, current_user["email"]):
+        raise HTTPException(status_code=404, detail="Conversation not found or expired.")
+    return {"status": "deleted", "id": conversation_id}
+
+
+@app.post("/api/v1/sanitize", response_model=SanitizeOut)
+async def sanitize_prompt(
+    payload: SanitizeIn,
+    authorization: str | None = Header(default=None),
+) -> SanitizeOut:
+    """Sanitize and risk-score a prompt without forwarding it anywhere.
+
+    Used by the browser extension: the prompt is checked here, and the
+    extension submits only the returned sanitized text to the AI website.
+    """
+    init_db()
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin", "user"})
+    prompt_rate_limiter.check(current_user["email"])
+    try:
+        verdict, _ = evaluate_prompt(payload.prompt, current_user, payload.service, payload.department, True)
+    except DetectionError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+    SANITIZER_METRICS.record_prompt(
+        verdict.action, payload.source, verdict.assessment.score,
+        [item.entity_type for item in verdict.sanitized.replacements],
+    )
+
+    audit_action = {
+        "BLOCK": "Extension blocked prompt",
+        "SANITIZE": "Extension sanitized prompt",
+    }.get(verdict.action, "Extension allowed prompt")
+    event = verdict_audit_event(
+        verdict, current_user["email"], payload.department, payload.service, payload.source, payload.prompt, audit_action,
+    )
+    audit = write_local(event, await write_remote(event))
+
+    return SanitizeOut(
+        requestId=verdict.detection.request_id,
+        decision=verdict.action,
+        reason=verdict.reason,
+        # A blocked prompt must not be sent at all, so no text is handed back.
+        sanitizedPrompt="" if verdict.blocked else verdict.sanitized.text,
+        containsSensitiveData=verdict.detection.contains_sensitive_data,
+        riskLevel=verdict.assessment.level.value,
+        riskScore=verdict.assessment.score,
+        riskAssessment=verdict.assessment.model_dump(mode="json"),
+        replacements=[item.model_dump(mode="json") for item in verdict.sanitized.replacements],
+        policyResult=verdict.policy.model_dump(mode="json"),
+        auditId=audit.id,
+    )
+
+
+@app.post("/audit/events", response_model=AuditEvent, status_code=201)
+async def create_audit_event(
+    payload: AuditEventIn,
+    authorization: str | None = Header(default=None),
+) -> AuditEvent:
+    init_db()
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin"})
+    remote_id = await write_remote(payload)
+    return write_local(payload, remote_id)
+
+
+@app.get("/audit/events", response_model=list[AuditEvent])
+def list_audit_events(
+    authorization: str | None = Header(default=None),
+    risk: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    service: str | None = Query(default=None),
+    actor: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> list[AuditEvent]:
+    init_db()
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin", "auditor"})
+    where, params = audit_filters(risk, status, service, actor)
+    with connect() as connection:
+        rows = connection.execute(
+            f"SELECT * FROM audit_events {where} ORDER BY timestamp DESC LIMIT ?",
+            [*params, limit],
+        ).fetchall()
+
+    return [audit_event_from_row(row) for row in rows]
+
+
+@app.get("/audit")
+def audit_summary(
+    authorization: str | None = Header(default=None),
+    risk: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    service: str | None = Query(default=None),
+    actor: str | None = Query(default=None),
+) -> dict[str, object]:
+    init_db()
+    get_auth_user(authorization)
+    where, params = audit_filters(risk, status, service, actor)
+    with connect() as connection:
+        events = connection.execute(f"SELECT * FROM audit_events {where} ORDER BY timestamp DESC LIMIT 100", params).fetchall()
+        categories = connection.execute(f"SELECT category AS name, COUNT(*) AS value FROM audit_events {where} GROUP BY category ORDER BY value DESC", params).fetchall()
+        risks = connection.execute(f"SELECT risk AS name, COUNT(*) AS value FROM audit_events {where} GROUP BY risk ORDER BY value DESC", params).fetchall()
+        services = connection.execute(f"SELECT service AS name, COUNT(*) AS value FROM audit_events {where} GROUP BY service ORDER BY value DESC", params).fetchall()
+        top_users = connection.execute(
+            f"""
+            SELECT actor AS name, department, SUM(CASE WHEN status = 'Blocked' THEN 1 ELSE 0 END) AS blocked
+            FROM audit_events
+            {where}
+            GROUP BY actor, department
+            ORDER BY blocked DESC, name ASC
+            LIMIT 8
+            """,
+            params,
+        ).fetchall()
+        data_types = connection.execute(f"SELECT finding AS name, COUNT(*) AS value FROM audit_events {where} GROUP BY finding ORDER BY value DESC LIMIT 10", params).fetchall()
+        totals = connection.execute(
+            f"""
+            SELECT
+              COUNT(*) AS total,
+              SUM(CASE WHEN status = 'Blocked' THEN 1 ELSE 0 END) AS blocked,
+              SUM(CASE WHEN risk IN ('High', 'Critical') THEN 1 ELSE 0 END) AS highRisk,
+              SUM(CASE WHEN category != 'Clean' THEN 1 ELSE 0 END) AS sensitive,
+              COUNT(DISTINCT actor) AS activeUsers,
+              AVG(risk_score) AS averageRiskScore
+            FROM audit_events
+            {where}
+            """,
+            params,
+        ).fetchone()
+
+    def rows(items: list[sqlite3.Row]) -> list[dict[str, object]]:
+        return [dict(item) for item in items]
+
+    return {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "totals": dict(totals),
+        "categories": rows(categories),
+        "risks": rows(risks),
+        "services": rows(services),
+        "topUsers": rows(top_users),
+        "recentEvents": [
+            {
+                "id": row["id"],
+                "timestamp": row["timestamp"],
+                "actor": row["actor"],
+                "department": row["department"],
+                "service": row["service"],
+                "action": row["action"],
+                "status": row["status"],
+                "risk": row["risk"],
+                "riskScore": row["risk_score"],
+                "finding": row["finding"],
+                "category": row["category"],
+                "policyRule": row["policy_rule"],
+                "maskedOutput": row["masked_output"],
+                "source": row["source"],
+            }
+            for row in events
+        ],
+        "recentAlerts": [
+            {
+                "id": row["id"],
+                "timestamp": row["timestamp"],
+                "actor": row["actor"],
+                "service": row["service"],
+                "finding": row["finding"],
+                "risk": row["risk"],
+                "status": row["status"],
+            }
+            for row in events
+            if row["risk"] in ("High", "Critical") or row["status"] == "Blocked"
+        ][:10],
+        "dataTypes": rows(data_types),
+        "filters": {"risk": risk, "status": status, "service": service, "actor": actor},
+        "componentHealth": {
+            "component_01": "Sensitive Data Detection Engine active",
+            "component_04": "Audit Logging and Security Dashboard active",
+            "component_02": "Prompt Sanitization & Risk Assessment active",
+            "component_03": "Security Policy & Access Control Engine active",
+        },
+        "trend": [],
+    }
+
+
+@app.get("/reports/export")
+def export_report(
+    authorization: str | None = Header(default=None),
+    risk: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    service: str | None = Query(default=None),
+    actor: str | None = Query(default=None),
+) -> Response:
+    current_user = get_auth_user(authorization)
+    require_role(current_user, {"admin", "auditor"})
+    init_db()
+    where, params = audit_filters(risk, status, service, actor)
+    with connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT id, timestamp, actor, department, service, action, status, risk,
+                   risk_score, finding, category, policy_rule, masked_output, source
+            FROM audit_events
+            {where}
+            ORDER BY timestamp DESC
+            """,
+            params,
+        ).fetchall()
+
+    headers = [
+        "id",
+        "timestamp",
+        "actor",
+        "department",
+        "service",
+        "action",
+        "status",
+        "risk",
+        "risk_score",
+        "finding",
+        "category",
+        "policy_rule",
+        "masked_output",
+        "source",
+    ]
+    lines = [",".join(headers)]
+    for row in rows:
+        values = []
+        for header in headers:
+            values.append(csv_cell(row[header]))
+        lines.append(",".join(values))
+
+    return Response(
+        "\n".join(lines),
+        media_type="text/csv",
+        headers={"content-disposition": "attachment; filename=secure-ai-audit-report.csv"},
+    )
+
+
+@app.post("/audit", response_model=AuditEvent, status_code=201)
+async def create_audit_event_short(
+    payload: AuditEventIn,
+    authorization: str | None = Header(default=None),
+) -> AuditEvent:
+    return await create_audit_event(payload, authorization)

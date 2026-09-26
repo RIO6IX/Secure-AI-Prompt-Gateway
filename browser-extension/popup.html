@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Secure AI Prompt Gateway</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <div class="brand-logo">S</div>
+      <div class="brand-text">
+        <div class="brand-title">SECURE AI</div>
+        <div class="brand-subtitle">PROMPT GATEWAY</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Gateway</h3>
+    <p id="backendStatus"><span class="status-dot"></span><span id="backendText">Checking...</span></p>
+  </div>
+
+  <form class="card" id="loginCard" hidden>
+    <h3>Login</h3>
+    <input id="email" type="email" placeholder="Email address" autocomplete="username" required>
+    <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+    <button id="loginButton" type="submit">Login</button>
+    <p id="loginError" class="form-error" hidden></p>
+  </form>
+
+  <div class="card" id="userCard" hidden>
+    <div class="user-header">
+      <h3>Signed in</h3>
+      <button id="logoutButton" class="logout-btn" type="button">Logout</button>
+    </div>
+    <p><strong id="userName"></strong><br><span id="userEmail"></span></p>
+    <p class="subtitle">Prompts on ChatGPT, Gemini, Copilot, Claude and Perplexity are checked before they are sent.</p>
+  </div>
+
+  <form class="card" id="testCard" hidden>
+    <h3>Test a Prompt</h3>
+    <textarea id="promptInput" rows="4" placeholder="Paste a prompt to see what the gateway would do..." required></textarea>
+    <button id="inspectButton" type="submit">Check Prompt</button>
+  </form>
+
+  <div class="card" id="resultCard" hidden>
+    <h3 id="resultTitle">Last Check</h3>
+    <div class="metric"><span>Decision</span><span id="decision" class="risk-badge">-</span></div>
+    <div class="metric"><span>Risk</span><span id="riskLevel">-</span></div>
+    <div class="metric"><span>Risk Score</span><span id="riskScore">-- / 100</span></div>
+    <div class="progress"><div id="scoreBar" class="progress-fill"></div></div>
+    <div class="metric"><span>Values replaced</span><span id="replaced">-</span></div>
+    <p id="reason" class="subtitle"></p>
+    <div id="sanitizedBlock" hidden>
+      <h4>Sanitized Prompt</h4>
+      <textarea id="sanitizedOutput" rows="4" readonly></textarea>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
