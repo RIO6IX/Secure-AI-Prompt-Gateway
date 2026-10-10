@@ -261,7 +261,15 @@ export function AuditDashboard() {
     "Admin Panel": "Create users and assign admin, auditor, or user roles.",
   };
 
-  const visibleNavItems = user?.role === "admin" ? [...navItems, "Admin Panel" as ViewName] : navItems;
+  // Hide views whose backend endpoints the role cannot call: Prompt Monitor uses
+  // /inspect and Users & Access uses /users (admin only); audit logs and reports
+  // are admin/auditor only.
+  const role = user?.role ?? "";
+  const canExport = role === "admin" || role === "auditor";
+  const hiddenViews: ViewName[] =
+    role === "admin" ? [] : role === "auditor" ? ["Prompt Monitor", "Users & Access"] : ["Prompt Monitor", "Users & Access", "Audit Logs", "Reports"];
+  const roleNavItems = navItems.filter((item) => !hiddenViews.includes(item));
+  const visibleNavItems = role === "admin" ? [...roleNavItems, "Admin Panel" as ViewName] : roleNavItems;
 
   function openView(item: ViewName) {
     if (item === "Audit Logs") window.location.assign("/audit-logs");
@@ -282,6 +290,10 @@ export function AuditDashboard() {
         </div>
 
         <nav aria-label="Primary navigation">
+          <button type="button" onClick={() => { window.location.assign("/"); }}>
+            <span className="nav-dot" />
+            Gateway Chat
+          </button>
           {visibleNavItems.map((item) => (
             <button type="button" className={item === activeView ? "active" : ""} key={item} onClick={() => openView(item)}>
               <span className="nav-dot" />
@@ -307,7 +319,7 @@ export function AuditDashboard() {
           </div>
           <div className="topbar-actions" aria-label="Dashboard controls">
             <button type="button" onClick={() => void load()}>Refresh</button>
-            <button type="button" onClick={() => void exportReport()}>Export CSV</button>
+            {canExport ? <button type="button" onClick={() => void exportReport()}>Export CSV</button> : null}
             <div className="admin-chip">
               <span />
               <div>

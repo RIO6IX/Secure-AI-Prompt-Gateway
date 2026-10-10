@@ -57,3 +57,6 @@ python_gateway/audit_logs.sqlite3*
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Local demo account credentials (never commit)
+.local-demo/

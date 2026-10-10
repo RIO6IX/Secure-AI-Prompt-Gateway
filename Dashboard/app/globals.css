@@ -1300,6 +1300,11 @@ nav button.active {
   min-height: 100vh;
   padding: 1.5rem 1.25rem;
   border-right: 1px solid #dbe5f3;
+  /* Pinned to the viewport so navigation and Log out stay reachable while the chat scrolls. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .gateway-brand,
@@ -1457,6 +1462,261 @@ nav button.active {
   color: #0b63f6;
   font-weight: 800;
   text-decoration: none;
+}
+
+/* Main navigation in the chat sidebar */
+.gateway-nav {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.gateway-nav button {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 2.5rem;
+  padding: 0 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #15233c;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gateway-nav button:hover {
+  background: #eaf2ff;
+}
+
+.gateway-nav button.active {
+  background: #eaf2ff;
+  border-color: #d7e5fb;
+  color: #0b63f6;
+}
+
+.gateway-nav .nav-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.gateway-nav button.active .nav-dot {
+  opacity: 1;
+}
+
+/* Signed-in account card with logout */
+.account-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.6rem 0.75rem;
+  align-items: center;
+  padding: 0.9rem;
+  border: 1px solid #dbe5f3;
+  border-radius: 0.6rem;
+  background: #fbfdff;
+}
+
+.account-avatar {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: #0b63f6;
+  color: #ffffff;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.account-avatar.small {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.78rem;
+}
+
+.account-meta {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.account-meta strong,
+.account-meta small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-meta strong {
+  color: #15233c;
+}
+
+.account-meta small {
+  color: #60708a;
+  font-size: 0.8rem;
+}
+
+.role-badge {
+  justify-self: start;
+  margin-top: 0.15rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #eaf2ff;
+  color: #0b63f6;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.logout-button {
+  grid-column: 1 / -1;
+  min-height: 2.3rem;
+  border: 1px solid #f3c4c7;
+  border-radius: 0.45rem;
+  background: #ffffff;
+  color: #d0242f;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  background: #fff1f2;
+}
+
+/* Account menu in the chat header */
+.user-menu {
+  position: relative;
+}
+
+.user-menu-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.45rem 0.2rem 0.2rem;
+  border: 1px solid #c7d6eb;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #44546e;
+  cursor: pointer;
+}
+
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 15rem;
+  padding: 0.4rem;
+  border: 1px solid #dbe5f3;
+  border-radius: 0.6rem;
+  background: #ffffff;
+  box-shadow: 0 1rem 2rem rgba(15, 29, 53, 0.16);
+}
+
+.user-menu-header {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.6rem 0.65rem 0.7rem;
+  margin-bottom: 0.3rem;
+  border-bottom: 1px solid #e1e8f2;
+}
+
+/* .system-status strong styles the "Online" pill; keep it off the menu header. */
+.system-status .user-menu-header strong {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: #15233c;
+}
+
+.user-menu-header small {
+  color: #60708a;
+  font-size: 0.8rem;
+}
+
+.user-menu-panel button {
+  min-height: 2.3rem;
+  padding: 0 0.65rem;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: #15233c;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-menu-panel button:hover {
+  background: #eaf2ff;
+}
+
+.user-menu-panel button.danger {
+  margin-top: 0.3rem;
+  border-top: 1px solid #e1e8f2;
+  border-radius: 0 0 0.4rem 0.4rem;
+  color: #d0242f;
+}
+
+.user-menu-panel button.danger:hover {
+  background: #fff1f2;
+}
+
+.gateway-dark .gateway-nav button,
+.gateway-dark .account-meta strong,
+.gateway-dark .system-status .user-menu-header strong,
+.gateway-dark .user-menu-panel button {
+  color: #eaf2ff;
+}
+
+.gateway-dark .gateway-nav button:hover,
+.gateway-dark .gateway-nav button.active,
+.gateway-dark .user-menu-panel button:hover {
+  background: #132b4c;
+  border-color: #244c81;
+}
+
+.gateway-dark .gateway-nav button.active {
+  color: #8ab8ff;
+}
+
+.gateway-dark .account-card,
+.gateway-dark .user-menu-trigger,
+.gateway-dark .user-menu-panel,
+.gateway-dark .logout-button {
+  background: #111d30;
+  border-color: #263550;
+}
+
+.gateway-dark .account-meta small,
+.gateway-dark .user-menu-header small,
+.gateway-dark .user-menu-trigger {
+  color: #9fb2ca;
+}
+
+.gateway-dark .user-menu-header,
+.gateway-dark .user-menu-panel button.danger {
+  border-color: #263550;
+}
+
+.gateway-dark .role-badge {
+  background: #132b4c;
+  color: #8ab8ff;
+}
+
+.gateway-dark .logout-button,
+.gateway-dark .user-menu-panel button.danger {
+  color: #ff7b84;
+}
+
+.gateway-dark .logout-button:hover,
+.gateway-dark .user-menu-panel button.danger:hover {
+  background: #2a1520;
 }
 
 .gateway-chat {
@@ -2005,8 +2265,20 @@ pre {
     border-right: 0;
   }
 
+  /* Stacked layout on phones: the sidebar flows with the page instead of pinning. */
+  .gateway-sidebar {
+    position: static;
+    height: auto;
+    overflow: visible;
+  }
+
   .system-status {
     margin-left: 0;
+  }
+
+  .user-menu-panel {
+    right: auto;
+    left: 0;
   }
 
   .gateway-header {

@@ -124,6 +124,39 @@ async function readJson(response: Response): Promise<(GatewayResult & { detail?:
 
 export function SecureGatewayChat() {
   const user = useStoredUser();
+  const role = String(user?.role ?? "").toLowerCase();
+  const canViewAudit = role === "admin" || role === "auditor";
+  // Auditors are read-only (POL-RBAC-001); /gateway/chat rejects their prompts.
+  const canSubmit = role !== "auditor";
+  const isAdmin = role === "admin";
+  const displayName = user?.name || user?.email || "Account";
+  const initials = displayName.split(/[\s.@]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "U";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
+
+  const navLinks = [
+    { label: "Gateway Chat", href: "/", show: true },
+    { label: "Security Dashboard", href: "/dashboard", show: true },
+    { label: "Audit Logs", href: "/audit-logs", show: canViewAudit },
+    { label: "Admin Panel", href: "/admin", show: isAdmin },
+    { label: "System Settings", href: "/system-settings", show: true },
+  ].filter((link) => link.show);
   const darkMode = useStoredItem(DARK_MODE_KEY) === "true";
   const [prompt, setPrompt] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -268,6 +301,20 @@ export function SecureGatewayChat() {
           </div>
         </div>
         <button className="new-chat" type="button" onClick={newChat}>+ New Chat</button>
+        <nav className="gateway-nav" aria-label="Main navigation">
+          {navLinks.map((link) => (
+            <button
+              key={link.href}
+              type="button"
+              className={link.href === "/" ? "active" : ""}
+              aria-current={link.href === "/" ? "page" : undefined}
+              onClick={() => { window.location.assign(link.href); }}
+            >
+              <span className="nav-dot" aria-hidden="true" />
+              {link.label}
+            </button>
+          ))}
+        </nav>
         <section className="chat-history" aria-label="Prompts in this session">
           <h2>This Session</h2>
           {turns.length ? turns.map((turn) => (
@@ -312,12 +359,16 @@ export function SecureGatewayChat() {
           <span className={lastModel?.ollamaAvailable === false ? "offline" : ""}>
             {lastModel ? (lastModel.ollamaAvailable ? "Local Ollama API" : "Ollama offline") : "Local Ollama API"}
           </span>
-          <hr />
-          <p>Signed in as</p>
-          <strong>{user?.email ?? "-"}</strong>
-          <span>{user?.role ?? "user"}</span>
         </div>
-        <a className="dashboard-link" href="/dashboard">Open Security Dashboard</a>
+        <div className="account-card" aria-label="Signed-in account">
+          <div className="account-avatar" aria-hidden="true">{initials}</div>
+          <div className="account-meta">
+            <strong>{displayName}</strong>
+            <small>{user?.email ?? "-"}</small>
+            <span className="role-badge">{role || "user"}</span>
+          </div>
+          <button className="logout-button" type="button" onClick={logout}>Log out</button>
+        </div>
       </aside>
 
       <section className="gateway-chat">
@@ -334,6 +385,34 @@ export function SecureGatewayChat() {
             <span>Gateway Backend</span>
             <strong className={health && !health.reachable ? "offline" : ""}>{statusLabel}</strong>
             {health?.reachable ? <small>{health.nerLoaded ? "NER model loaded" : "Regex-only mode"}</small> : null}
+            <div className="user-menu" ref={menuRef}>
+              <button
+                className="user-menu-trigger"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label={`Account menu for ${displayName}`}
+                onClick={() => setMenuOpen((open) => !open)}
+              >
+                <span className="account-avatar small" aria-hidden="true">{initials}</span>
+                <span aria-hidden="true">▾</span>
+              </button>
+              {menuOpen ? (
+                <div className="user-menu-panel" role="menu">
+                  <div className="user-menu-header">
+                    <strong>{displayName}</strong>
+                    <small>{user?.email ?? "-"}</small>
+                    <span className="role-badge">{role || "user"}</span>
+                  </div>
+                  {navLinks.filter((link) => link.href !== "/").map((link) => (
+                    <button key={link.href} type="button" role="menuitem" onClick={() => { window.location.assign(link.href); }}>
+                      {link.label}
+                    </button>
+                  ))}
+                  <button type="button" role="menuitem" className="danger" onClick={logout}>Log out</button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </header>
 
@@ -376,7 +455,13 @@ export function SecureGatewayChat() {
           <div ref={threadEnd} />
         </div>
 
-        <form className="gateway-composer" onSubmit={submit}>
+        {!canSubmit ? (
+          <div className="gateway-error" role="status">
+            Auditor accounts are read-only and cannot send prompts. Use the <a href="/audit-logs">audit logs</a> or
+            the <a href="/dashboard">security dashboard</a> to review activity.
+          </div>
+        ) : null}
+        <form className="gateway-composer" onSubmit={submit} style={canSubmit ? undefined : { display: "none" }}>
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}

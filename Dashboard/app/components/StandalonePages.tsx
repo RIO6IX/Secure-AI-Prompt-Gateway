@@ -7,6 +7,14 @@ import { useStoredUser } from "../lib/storage";
 type Role = "admin" | "auditor" | "user";
 type Row = Record<string, string | number | boolean | null>;
 
+function RoleNotice({ message }: { message: string }) {
+  return (
+    <div className="backend-error">
+      {message} <button type="button" onClick={() => { window.location.assign("/"); }}>Back to Gateway Chat</button>
+    </div>
+  );
+}
+
 function logout() {
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(USER_KEY);
@@ -61,7 +69,7 @@ function PageChrome({
         <nav aria-label="Page navigation">
           <button type="button" onClick={() => { window.location.assign("/"); }}><span className="nav-dot" />Gateway Chat</button>
           <button type="button" onClick={() => { window.location.assign("/dashboard"); }}><span className="nav-dot" />Dashboard</button>
-          <button type="button" className={title === "Audit Logs" ? "active" : ""} onClick={() => { window.location.assign("/audit-logs"); }}><span className="nav-dot" />Audit Logs</button>
+          {user?.role === "admin" || user?.role === "auditor" ? <button type="button" className={title === "Audit Logs" ? "active" : ""} onClick={() => { window.location.assign("/audit-logs"); }}><span className="nav-dot" />Audit Logs</button> : null}
           <button type="button" className={title === "System Settings" ? "active" : ""} onClick={() => { window.location.assign("/system-settings"); }}><span className="nav-dot" />System Settings</button>
           {user?.role === "admin" ? <button type="button" className={title === "Admin Panel" ? "active" : ""} onClick={() => { window.location.assign("/admin"); }}><span className="nav-dot" />Admin Panel</button> : null}
         </nav>
@@ -140,11 +148,23 @@ export function AuditLogsPage() {
     }
   }
 
+  const role = useStoredUser()?.role ?? "";
+  const canViewAudit = role === "admin" || role === "auditor";
+
   useEffect(() => {
+    if (!canViewAudit) return;
     apiFetch<Row[]>("/audit/events").then(setEvents, (loadError: unknown) =>
       setError(loadError instanceof Error ? loadError.message : "Could not load audit logs"),
     );
-  }, []);
+  }, [canViewAudit]);
+
+  if (role && !canViewAudit) {
+    return (
+      <PageChrome title="Audit Logs" description="Separate audit log webpage. Admin and auditor roles can read this page.">
+        <RoleNotice message="Audit logs are available to admin and auditor accounts only. Your own activity is on the Dashboard." />
+      </PageChrome>
+    );
+  }
 
   return (
     <PageChrome title="Audit Logs" description="Separate audit log webpage. Admin and auditor roles can read this page.">
@@ -275,12 +295,24 @@ export function AdminPanelPage() {
     }
   }
 
+  const viewerRole = useStoredUser()?.role ?? "";
+  const isAdmin = viewerRole === "admin";
+
   useEffect(() => {
+    if (!isAdmin) return;
     apiFetch<{ users: Row[] }>("/users").then(
       (payload) => setUsers(payload.users),
       (loadError: unknown) => setError(loadError instanceof Error ? loadError.message : "Could not load users"),
     );
-  }, []);
+  }, [isAdmin]);
+
+  if (viewerRole && !isAdmin) {
+    return (
+      <PageChrome title="Admin Panel" description="Create users and assign admin, auditor, or user roles.">
+        <RoleNotice message="User management is available to admin accounts only." />
+      </PageChrome>
+    );
+  }
 
   return (
     <PageChrome title="Admin Panel" description="Create users and assign admin, auditor, or user roles.">
