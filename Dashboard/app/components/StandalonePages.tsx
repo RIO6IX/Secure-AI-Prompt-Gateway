@@ -319,7 +319,7 @@ export function AdminPanelPage() {
     <PageChrome title="Admin Panel" description="Create users and assign admin, auditor, or user roles.">
       {notice ? <div className="success-state">{notice}</div> : null}
       {error ? <div className="backend-error">{error}</div> : null}
-      <section className="content-grid single-view">
+      <section className="admin-layout single-view">
         <article className="panel tool-panel">
           <div className="panel-heading"><div><h2>Create User</h2><p>Admin has all privileges. Auditor reads audit logs. User is read-only dashboard.</p></div></div>
           <form className="prompt-form" onSubmit={createUser}>

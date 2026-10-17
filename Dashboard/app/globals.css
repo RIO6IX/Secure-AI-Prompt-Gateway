@@ -936,6 +936,38 @@ nav button.active {
   padding: 1rem;
 }
 
+.admin-layout {
+  display: grid;
+  grid-template-columns: minmax(20rem, 26rem) minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.admin-layout > .panel {
+  grid-column: auto;
+  min-width: 0;
+}
+
+.admin-layout .prompt-form button {
+  width: 100%;
+}
+
+.admin-layout .simple-table > div {
+  min-width: 34rem;
+  grid-template-columns: 1.1fr 1.7fr 0.7fr 0.6fr 0.8fr;
+  align-items: center;
+}
+
+.admin-layout .simple-table span {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .admin-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 .panel-actions {
   display: flex;
   flex-wrap: wrap;
