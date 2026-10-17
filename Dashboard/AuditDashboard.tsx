@@ -61,6 +61,12 @@ function displayNumber(value: unknown) {
   return number(value).toLocaleString("en-US");
 }
 
+function formatTimestamp(value: unknown) {
+  const date = new Date(String(value ?? ""));
+  if (Number.isNaN(date.getTime())) return String(value ?? "");
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function EmptyState({ message = "No records in the backend yet." }: { message?: string }) {
   return (
     <div className="empty-state">
@@ -344,13 +350,14 @@ export function AuditDashboard() {
         {activeView === "Dashboard" ? (
           <>
             <Metrics metrics={metrics} />
-            <section className="content-grid">
+            <section className="content-grid overview-grid">
               <CategoryPanel categories={categories} totalEvents={totalEvents} />
               <RiskPanel risks={risks} totalEvents={totalEvents} />
+              <DataTypesPanel dataTypes={dataTypes} maxType={maxType} />
               <AlertsPanel alerts={alerts} />
               <UsersPanel users={topUsers} maxBlocked={maxBlocked} />
-              <SourcesPanel services={services} />
-              <DataTypesPanel dataTypes={dataTypes} maxType={maxType} />            </section>
+              <SourcesPanel services={services} totalEvents={totalEvents} />
+            </section>
           </>
         ) : null}
 
@@ -451,7 +458,7 @@ function AlertsPanel({ alerts }: { alerts: Row[] }) {
             <div>
               <strong>{alert.finding}</strong>
               <p>{alert.actor}</p>
-              <small>{alert.service} - {alert.timestamp}</small>
+              <small>{alert.service} · {formatTimestamp(alert.timestamp)}</small>
             </div>
             <em>{alert.risk}</em>
           </div>
@@ -482,32 +489,39 @@ function RiskPanel({ risks, totalEvents }: { risks: Row[]; totalEvents: number }
 }
 
 function UsersPanel({ users, maxBlocked }: { users: Row[]; maxBlocked: number }) {
+  const blockedUsers = users.filter((user) => number(user.blocked) > 0);
   return (
     <article className="panel users-panel">
       <div className="panel-heading"><div><h2>Top Users by Blocked Prompts</h2><p>Calculated from real blocked events</p></div></div>
       <div className="rank-list">
-        {users.length ? users.map((user, index) => (
+        {blockedUsers.length ? blockedUsers.map((user, index) => (
           <div key={String(user.name)}>
             <span>{index + 1}</span>
             <p>{user.name}<small>{user.department}</small></p>
             <strong>{displayNumber(user.blocked)}</strong>
             <i style={{ width: `${(number(user.blocked) / maxBlocked) * 100}%` }} />
           </div>
-        )) : <EmptyState />}
+        )) : <EmptyState message="No prompts have been blocked yet." />}
       </div>
     </article>
   );
 }
 
-function SourcesPanel({ services }: { services: Row[] }) {
+function SourcesPanel({ services, totalEvents }: { services: Row[]; totalEvents: number }) {
   return (
     <article className="panel performance-panel">
       <div className="panel-heading"><div><h2>Backend Sources</h2><p>Services writing audit events</p></div></div>
-      <dl>
-        {services.length ? services.map((service) => (
-          <div key={String(service.name)}><dt>{service.name}</dt><dd>{displayNumber(service.value)}</dd></div>
-        )) : <div><dt>No services yet</dt><dd>0</dd></div>}
-      </dl>
+      <div className="data-type-list">
+        {services.length ? services.map((service) => {
+          const share = totalEvents ? Math.round((number(service.value) / totalEvents) * 100) : 0;
+          return (
+            <div key={String(service.name)}>
+              <p>{service.name}<strong>{displayNumber(service.value)} <small>{share}%</small></strong></p>
+              <span><i style={{ width: `${share}%` }} /></span>
+            </div>
+          );
+        }) : <EmptyState message="No services have written audit events yet." />}
+      </div>
     </article>
   );
 }

@@ -968,6 +968,157 @@ nav button.active {
   }
 }
 
+/* Dashboard home: two even rows that fill the width. Charts on top, lists
+   below; each card keeps a fixed height and scrolls its own list. */
+.content-grid.overview-grid {
+  margin-top: 0.85rem;
+  align-items: stretch;
+}
+
+.overview-grid > .panel {
+  grid-row: auto;
+  display: flex;
+  flex-direction: column;
+  max-height: none;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.overview-grid > .category-panel,
+.overview-grid > .risk-panel,
+.overview-grid > .types-panel {
+  grid-column: span 4;
+  height: 19rem;
+}
+
+.overview-grid > .alerts-panel {
+  grid-column: span 6;
+  height: 24rem;
+}
+
+.overview-grid > .users-panel,
+.overview-grid > .performance-panel {
+  grid-column: span 3;
+  height: 24rem;
+}
+
+.overview-grid .panel-heading {
+  flex: 0 0 auto;
+}
+
+.overview-grid .panel-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.overview-grid .alert-list,
+.overview-grid .rank-list,
+.overview-grid .data-type-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  align-content: start;
+  padding-right: 0.35rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
+}
+
+.overview-grid .donut-layout {
+  flex: 1 1 auto;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 1.5rem;
+  padding: 0 0.5rem;
+}
+
+.overview-grid .category-list {
+  max-width: none;
+}
+
+.overview-grid .category-list p {
+  color: #dbeafe;
+}
+
+.overview-grid .data-type-list {
+  gap: 0.95rem;
+}
+
+.overview-grid .data-type-list p {
+  display: flex;
+  margin: 0;
+  color: #dbeafe;
+}
+
+.overview-grid .data-type-list small {
+  margin-left: 0.35rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.overview-grid .empty-state {
+  display: block;
+  margin: 0;
+  padding: 1.5rem 1rem;
+  border: 1px dashed rgba(148, 163, 184, 0.25);
+  background: rgba(6, 16, 29, 0.35);
+  color: #dbeafe;
+  text-align: center;
+}
+
+.overview-grid .empty-state p {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 1400px) {
+  .content-grid.overview-grid {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+
+  .overview-grid > .category-panel,
+  .overview-grid > .risk-panel {
+    grid-column: span 6;
+  }
+
+  .overview-grid > .alerts-panel {
+    grid-column: span 7;
+  }
+
+  .overview-grid > .types-panel {
+    grid-row: 2;
+    grid-column: 8 / span 5;
+    height: 24rem;
+  }
+
+  .overview-grid > .users-panel,
+  .overview-grid > .performance-panel {
+    grid-column: span 6;
+  }
+}
+
+@media (max-width: 760px) {
+  .content-grid.overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-grid > .panel {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    height: auto;
+    max-height: 26rem;
+  }
+
+  .overview-grid .donut-layout {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .overview-grid .category-list {
+    width: 100%;
+  }
+}
+
 .panel-actions {
   display: flex;
   flex-wrap: wrap;
