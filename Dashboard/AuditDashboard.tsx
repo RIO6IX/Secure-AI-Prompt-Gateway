@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, TOKEN_KEY, USER_KEY, authHeaders, getStoredToken } from "./app/lib/api";
 import { useStoredUser } from "./app/lib/storage";
 
@@ -106,6 +106,9 @@ export function AuditDashboard() {
   const [prompt, setPrompt] = useState("");
   const [service, setService] = useState("ChatGPT Enterprise");
   const [inspectResult, setInspectResult] = useState<Row | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const loadingRef = useRef<Promise<void> | null>(null);
   const user = useStoredUser();
 
   async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -116,6 +119,7 @@ export function AuditDashboard() {
     }
 
     const response = await fetch(`${API_BASE_URL}${path}`, {
+      cache: "no-store",
       ...init,
       headers: {
         ...authHeaders(token),
@@ -137,41 +141,40 @@ export function AuditDashboard() {
     return payload as T;
   }
 
-  function fetchDashboard() {
-    return Promise.all([
-      apiFetch<AuditResponse>("/audit"),
-      apiFetch<{ users: Row[] }>("/users").catch(() => ({ users: [] })),
-      apiFetch<{ policies: Row[] }>("/policies").catch(() => ({ policies: [] })),
-      apiFetch<{ integrations: Row[] }>("/integrations").catch(() => ({ integrations: [] })),
-    ]);
-  }
-
-  function applyDashboard([audit, usersPayload, policyPayload, integrationPayload]: Awaited<ReturnType<typeof fetchDashboard>>) {
-    setData(audit);
-    setUsers(usersPayload.users);
-    setPolicies(policyPayload.policies);
-    setIntegrations(integrationPayload.integrations);
-    setError("");
-  }
-
-  function showLoadError(loadError: unknown) {
-    setError(loadError instanceof Error ? loadError.message : "Backend request failed");
-  }
-
+  // Each endpoint updates its own state as soon as it answers, so a slow
+  // /integrations call (it probes Ollama) never holds back the audit metrics.
   async function load() {
+    if (loadingRef.current) return loadingRef.current;
+    setRefreshing(true);
+    const run = (async () => {
+      const secondary = [
+        apiFetch<{ users: Row[] }>("/users").then((payload) => setUsers(payload.users), () => undefined),
+        apiFetch<{ policies: Row[] }>("/policies").then((payload) => setPolicies(payload.policies), () => undefined),
+        apiFetch<{ integrations: Row[] }>("/integrations").then((payload) => setIntegrations(payload.integrations), () => undefined),
+      ];
+      try {
+        setData(await apiFetch<AuditResponse>("/audit"));
+        setError("");
+        setLastUpdated(new Date());
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Backend request failed");
+      }
+      await Promise.all(secondary);
+    })();
+    loadingRef.current = run;
     try {
-      applyDashboard(await fetchDashboard());
-    } catch (loadError) {
-      showLoadError(loadError);
+      await run;
+    } finally {
+      loadingRef.current = null;
+      setRefreshing(false);
     }
   }
 
   useEffect(() => {
-    const refresh = () => fetchDashboard().then(applyDashboard, showLoadError);
-    refresh();
-    const timer = window.setInterval(refresh, 15000);
+    void load();
+    const timer = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(timer);
-    // Poll on a fixed interval; the fetch helpers only close over setters.
+    // Poll on a fixed interval; load only closes over setters and a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -315,10 +318,15 @@ export function AuditDashboard() {
           <div>
             <p>Secure AI Prompt Gateway</p>
             <h1>{activeView}</h1>
-            <span>{pageDescriptions[activeView]}</span>
+            <span>
+              {pageDescriptions[activeView]}
+              {lastUpdated ? ` Last updated ${lastUpdated.toLocaleTimeString()}.` : ""}
+            </span>
           </div>
           <div className="topbar-actions" aria-label="Dashboard controls">
-            <button type="button" onClick={() => void load()}>Refresh</button>
+            <button type="button" onClick={() => void load()} disabled={refreshing} aria-busy={refreshing}>
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
             {canExport ? <button type="button" onClick={() => void exportReport()}>Export CSV</button> : null}
             <div className="admin-chip">
               <span />
@@ -344,7 +352,7 @@ export function AuditDashboard() {
               <UsersPanel users={topUsers} maxBlocked={maxBlocked} />
               <SourcesPanel services={services} />
               <DataTypesPanel dataTypes={dataTypes} maxType={maxType} />
-              <AuditTable events={events} onReload={load} />
+              <AuditTable events={events} onReload={load} reloading={refreshing} />
             </section>
           </>
         ) : null}
@@ -523,12 +531,14 @@ function DataTypesPanel({ dataTypes, maxType }: { dataTypes: Row[]; maxType: num
   );
 }
 
-function AuditTable({ events, onReload }: { events: Row[]; onReload: () => Promise<void> }) {
+function AuditTable({ events, onReload, reloading }: { events: Row[]; onReload: () => Promise<void>; reloading: boolean }) {
   return (
     <article className="panel audit-panel">
       <div className="panel-heading">
         <div><h2>Audit Logs</h2><p>Records loaded from FastAPI SQLite, with masked output only</p></div>
-        <button type="button" onClick={() => void onReload()}>Reload Logs</button>
+        <button type="button" onClick={() => void onReload()} disabled={reloading} aria-busy={reloading}>
+          {reloading ? "Reloading..." : "Reload Logs"}
+        </button>
       </div>
       <div className="audit-table" role="table" aria-label="Audit log events">
         <div role="row" className="audit-header"><span>Event ID</span><span>Time</span><span>User</span><span>Action</span><span>Finding</span><span>Masked Output</span><span>Status</span></div>

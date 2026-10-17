@@ -28,6 +28,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error("Login required");
   }
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    cache: "no-store",
     ...init,
     headers: {
       ...authHeaders(token),
