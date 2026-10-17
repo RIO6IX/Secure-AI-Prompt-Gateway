@@ -231,7 +231,6 @@ export function AuditDashboard() {
   const totalEvents = number(totals.total);
   const categories = data?.categories ?? [];
   const risks = data?.risks ?? [];
-  const events = data?.recentEvents ?? [];
   const topUsers = data?.topUsers ?? [];
   const alerts = data?.recentAlerts ?? [];
   const dataTypes = data?.dataTypes ?? [];
@@ -351,9 +350,7 @@ export function AuditDashboard() {
               <AlertsPanel alerts={alerts} />
               <UsersPanel users={topUsers} maxBlocked={maxBlocked} />
               <SourcesPanel services={services} />
-              <DataTypesPanel dataTypes={dataTypes} maxType={maxType} />
-              <AuditTable events={events} onReload={load} reloading={refreshing} />
-            </section>
+              <DataTypesPanel dataTypes={dataTypes} maxType={maxType} />            </section>
           </>
         ) : null}
 
@@ -526,29 +523,6 @@ function DataTypesPanel({ dataTypes, maxType }: { dataTypes: Row[]; maxType: num
             <span><i style={{ width: `${(number(item.value) / maxType) * 100}%` }} /></span>
           </div>
         )) : <EmptyState />}
-      </div>
-    </article>
-  );
-}
-
-function AuditTable({ events, onReload, reloading }: { events: Row[]; onReload: () => Promise<void>; reloading: boolean }) {
-  return (
-    <article className="panel audit-panel">
-      <div className="panel-heading">
-        <div><h2>Audit Logs</h2><p>Records loaded from FastAPI SQLite, with masked output only</p></div>
-        <button type="button" onClick={() => void onReload()} disabled={reloading} aria-busy={reloading}>
-          {reloading ? "Reloading..." : "Reload Logs"}
-        </button>
-      </div>
-      <div className="audit-table" role="table" aria-label="Audit log events">
-        <div role="row" className="audit-header"><span>Event ID</span><span>Time</span><span>User</span><span>Action</span><span>Finding</span><span>Masked Output</span><span>Status</span></div>
-        {events.length ? events.map((event) => (
-          <div role="row" className="audit-row" key={String(event.id)}>
-            <span>{event.id}</span><span>{event.timestamp}</span><span>{event.actor}</span><span>{event.action}</span>
-            <span><em className={`risk-badge ${String(event.risk).toLowerCase()}`}>{event.finding}</em></span>
-            <span>{event.maskedOutput}</span><span>{event.status}</span>
-          </div>
-        )) : <div className="audit-row"><span>No records</span><span /><span /><span /><span /><span>Backend is ready for audit ingestion.</span><span /></div>}
       </div>
     </article>
   );
